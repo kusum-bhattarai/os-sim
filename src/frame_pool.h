@@ -3,9 +3,7 @@
 #include <cstddef>
 #include <queue>
 #include <stdexcept>
-
-constexpr size_t PAGE_SIZE = 1024;
-constexpr size_t NUM_FRAMES = 100;
+#include "constants.h"
 
 struct Frame {
     std::array<std::byte, PAGE_SIZE> data;
