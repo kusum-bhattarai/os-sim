@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # --- source files (add to this list as you build more phases) ---
 set(SOURCES
     src/frame_pool.cpp
+    src/page_table.cpp
 )
 
 # --- test executables ---
@@ -15,4 +16,10 @@ add_executable(test_frame_pool
     ${SOURCES}
 )
 
+add_executable(test_page_table
+    tests/test_page_table.cpp
+    ${SOURCES}
+)
+
 target_include_directories(test_frame_pool PRIVATE src)
+target_include_directories(test_page_table PRIVATE src)
