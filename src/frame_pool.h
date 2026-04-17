@@ -1,0 +1,32 @@
+#pragma once
+#include <array>
+#include <cstddef>
+#include <queue>
+#include <stdexcept>
+
+constexpr size_t PAGE_SIZE = 1024;
+constexpr size_t NUM_FRAMES = 100;
+
+struct Frame {
+    std::array<std::byte, PAGE_SIZE> data;
+    bool in_use;
+    int ref_count;
+    Frame() : in_use(false), ref_count(0) {}
+};
+
+class FramePool {
+private:
+    std::array<Frame, NUM_FRAMES> frames;
+    std::queue<int> free_frames;
+public:
+    FramePool();
+
+    // allocate a frame and return its index
+    int allocate();
+
+    // free a frame by index
+    void deallocate(int frame_index);
+
+    // get a frame by index
+    Frame& get_frame(int frame_index);
+};
