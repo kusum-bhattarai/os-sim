@@ -11,6 +11,8 @@ set(SOURCES
     src/policy/fifo.cpp
     src/policy/lru.cpp
     src/policy/opt.cpp
+    src/memory_manager.cpp
+    src/metrics.cpp
     )
 
 # --- test executables ---
@@ -36,6 +38,11 @@ add_executable(test_lru
 
 add_executable(test_opt
     tests/test_opt.cpp
+    ${SOURCES}
+)
+
+add_executable(test_memory_manager
+    tests/test_memory_manager.cpp
     ${SOURCES}
 )
 
