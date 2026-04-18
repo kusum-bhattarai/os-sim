@@ -1,3 +1,4 @@
+#pragma once
 #include "replacement_policy.h"
 #include <vector>
 #include <unordered_map>
