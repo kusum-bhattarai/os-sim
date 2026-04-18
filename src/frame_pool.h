@@ -14,10 +14,12 @@ struct Frame {
 
 class FramePool {
 private:
-    std::array<Frame, NUM_FRAMES> frames;
+    std::vector<Frame> frames;
     std::queue<int> free_frames;
+    int capacity;
+    
 public:
-    FramePool();
+    FramePool(int num_frames = NUM_FRAMES);
 
     // allocate a frame and return its index
     int allocate();

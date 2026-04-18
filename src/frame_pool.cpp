@@ -1,7 +1,8 @@
 #include "frame_pool.h"
 
-FramePool::FramePool() {
-    for (size_t i = 0; i < frames.size(); ++i) {
+FramePool::FramePool(int num_frames): capacity(num_frames){
+    frames.resize(num_frames);
+    for (size_t i = 0; i < num_frames; ++i) {
         free_frames.push(i);
     }
 }
