@@ -2,6 +2,8 @@ struct Metrics {
     int page_faults = 0;
     int hits = 0;
     int evictions = 0;
+    int cow_forks = 0;
+    int cow_copies = 0;
 
     void print() const;  // prints a summary table
     void reset();
