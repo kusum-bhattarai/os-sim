@@ -28,4 +28,7 @@ public:
 
     // translate a virtual address to a physical address, returns -1 if not valid
     int translate(int virtual_address);
+
+    // get all entries
+    const std::unordered_map<int, PageTableEntry>& get_entries() const { return entries; }
 };
