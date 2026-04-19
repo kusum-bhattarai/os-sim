@@ -46,6 +46,13 @@ void MemoryManager::access(int pid, int virtual_address, bool is_write){
         PageTableEntry* entry = pt.lookup(vpn);
         entry->referenced = true;
 
+        if (!is_write && !entry->writable) {
+            int ref = frame_pool.get_frame(entry->frame_index).ref_count;
+            if (ref > 1) {
+                metrics.cow_copies_avoided++;
+            }
+        }
+
         if (is_write){
             if (!entry->writable){
                 // if page is CoW, need to copy to a new frame
