@@ -17,7 +17,7 @@ private:
     std::vector<Frame> frames;
     std::queue<int> free_frames;
     int capacity;
-    
+
 public:
     FramePool(int num_frames = NUM_FRAMES);
 
@@ -29,4 +29,10 @@ public:
 
     // get a frame by index
     Frame& get_frame(int frame_index);
+
+    // increment ref count 
+    void increment_ref(int frame_index);
+
+    // decrement ref count / free if reaches 0
+    void decrement_ref(int frame_index);
 };
