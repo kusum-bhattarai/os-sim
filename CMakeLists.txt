@@ -46,8 +46,14 @@ add_executable(test_memory_manager
     ${SOURCES}
 )
 
+add_executable(test_cow
+    tests/test_cow.cpp
+    ${SOURCES}
+)
+
 target_include_directories(test_frame_pool PRIVATE src)
 target_include_directories(test_page_table PRIVATE src)
 target_include_directories(test_fifo PRIVATE src)
 target_include_directories(test_lru PRIVATE src)
 target_include_directories(test_opt PRIVATE src)
+target_include_directories(test_cow PRIVATE src)
