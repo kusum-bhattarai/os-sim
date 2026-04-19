@@ -19,7 +19,7 @@ int FramePool::allocate() {
 }
 
 void FramePool::deallocate(int frame_index) {
-    if (frame_index < 0 || static_cast<size_t>(frame_index) >= frames.size()) {
+    if (frame_index < 0 || static_cast<size_t>(frame_index) >= capacity) {
         throw std::out_of_range("Invalid frame index");
     }
     if (!frames[frame_index].in_use) {
@@ -32,11 +32,34 @@ void FramePool::deallocate(int frame_index) {
 }
 
 Frame& FramePool::get_frame(int frame_index) {
-    if (frame_index < 0 || static_cast<size_t>(frame_index) >= frames.size()) {
+    if (frame_index < 0 || static_cast<size_t>(frame_index) >= capacity) {
         throw std::out_of_range("Invalid frame index");
     }
     if (!frames[frame_index].in_use) {
         throw std::runtime_error("Frame is not in use");
     }
     return frames[frame_index];
+}
+
+void FramePool::increment_ref(int frame_index){
+    if (frame_index < 0 || static_cast<size_t>(frame_index) >= capacity){
+        throw std::out_of_range("Invalid frame index");
+    }
+    if (!frames[frame_index].in_use){
+        throw std::runtime_error("Frame is not in use");
+    }
+    frames[frame_index].ref_count++;
+}
+
+void FramePool::decrement_ref(int frame_index){
+    if (frame_index < 0 || static_cast<size_t>(frame_index) >= capacity){
+        throw std::out_of_range("Invalid frame index");
+    } else if (frames[frame_index].ref_count <= 0){
+        throw std::runtime_error("Frame ref count is already 0");
+    } else{
+        frames[frame_index].ref_count--;
+        if (frames[frame_index].ref_count == 0){
+            deallocate(frame_index);
+        }
+    }
 }

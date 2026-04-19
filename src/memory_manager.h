@@ -13,7 +13,7 @@ private:
     Metrics metrics;
     std::unique_ptr<ReplacementPolicy> policy;
     std::unordered_map<int,std::unique_ptr<Process>> processes; // pid -> process
-    std::unordered_map<int,std::pair<int,int>> frame_to_process_vpn; // frame_index -> {pid, vpn}
+    std::unordered_map<int, std::vector<std::pair<int,int>>> frame_to_owners;  // frame_index -> list of {pid, vpn} owning this frame (for CoW)
 
 public:
     MemoryManager(ReplacementPolicy* policy, int num_frames = NUM_FRAMES): policy(policy), frame_pool(num_frames) {}
@@ -22,4 +22,6 @@ public:
     void access(int pid, int virtual_address, bool is_write);  // simulates a memory access, updates metrics, and handles page faults
     void print_metrics() const {metrics.print();}
     void reset_metrics() { metrics.reset(); }
+    void fork_process(int parent_pid, int child_pid); // creates a new process with a copy of the parent's page table (for CoW implementation)
+    void handle_cow(int pid, int vpn, PageTableEntry* entry);
 };
