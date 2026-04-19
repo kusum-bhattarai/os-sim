@@ -13,3 +13,7 @@ void Metrics::reset() {
     hits = 0;
     evictions = 0;
 }
+
+const Metrics& Metrics::get_metrics() const {
+    return *this;
+}

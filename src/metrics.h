@@ -4,7 +4,9 @@ struct Metrics {
     int evictions = 0;
     int cow_forks = 0;
     int cow_copies = 0;
+    int cow_copies_avoided = 0;
 
     void print() const;  // prints a summary table
     void reset();
+    const Metrics& get_metrics() const;
 };
