@@ -29,23 +29,84 @@ void MemoryManager::access(int pid, int virtual_address, bool is_write){
         } catch (const std::runtime_error&) {
             // no free frames, need to evict
             int victim_frame = policy->evict();
-            auto [victim_pid, victim_vpn] = frame_to_process_vpn[victim_frame];
-            Process& victim_proc = *processes[victim_pid];
-            victim_proc.get_page_table().invalidate(victim_vpn);
+            for (auto& [owner_pid, owner_vpn] : frame_to_owners[victim_frame]) {
+                processes[owner_pid]->get_page_table().invalidate(owner_vpn);
+            }
+            frame_to_owners[victim_frame].clear();
             frame_index = victim_frame;
             metrics.evictions++;
         } 
         pt.insert(vpn, frame_index);
-        frame_to_process_vpn[frame_index] = {pid, vpn};
+        pt.lookup(vpn)->writable = true; // new page is writable
+        frame_to_owners[frame_index] = {{pid, vpn}};    // single owner 
         policy->on_load(frame_index, vpn);
     } else {
         // page hit
         metrics.hits++;
         PageTableEntry* entry = pt.lookup(vpn);
+        entry->referenced = true;
+
         if (is_write){
+            if (!entry->writable){
+                // if page is CoW, need to copy to a new frame
+                handle_cow(pid, vpn, entry);
+                metrics.cow_copies++;
+            } 
             entry->dirty = true;
         }
-        entry->referenced = true;
         policy->on_access(entry->frame_index);
     }
+}
+
+void MemoryManager::fork_process(int parent_pid, int child_pid){
+    if (processes.count(parent_pid) == 0){
+        throw std::runtime_error("Parent process does not exist");
+    } else if (processes.count(child_pid) > 0){
+        throw std::runtime_error("Child PID already exists");
+    } else {
+        Process& parent = *processes[parent_pid];
+        auto child = std::make_unique<Process>(child_pid);
+        PageTable& parent_pt = parent.get_page_table();
+        PageTable& child_pt = child->get_page_table();
+
+        // copy page table entries and increment frame ref counts
+        for (const auto& [vpn, entry] : parent_pt.get_entries()){
+            if (entry.valid){
+                child_pt.insert(vpn, entry.frame_index);
+                child_pt.lookup(vpn)->writable = false; // mark CoW
+                parent_pt.lookup(vpn)->writable = false; // mark CoW
+                frame_pool.increment_ref(entry.frame_index);
+                frame_to_owners[entry.frame_index].push_back({child_pid, vpn});
+            }
+        }
+        processes[child_pid] = std::move(child);
+        metrics.cow_forks++;
+    }
+}
+
+void MemoryManager::handle_cow(int pid, int vpn, PageTableEntry* entry){
+    if (entry->writable){
+        return; // already writable, no need to copy
+    }
+    int old_frame = entry->frame_index;
+    int new_frame = frame_pool.allocate();
+    // simulate copying data by just updating ownership and ref counts
+    frame_pool.decrement_ref(old_frame); // decrement ref for old frame
+    entry->frame_index = new_frame; // point to new frame
+    entry->writable = true; // new frame is writable
+
+    // update ownership for the new frame
+    auto& owners = frame_to_owners[old_frame];
+    auto it = std::find_if(owners.begin(), owners.end(), [&](const std::pair<int,int>& owner){
+        return owner.first == pid && owner.second == vpn;
+    });
+    if (it != owners.end()){
+        owners.erase(it); // remove old ownership
+        if (owners.size() == 1){
+            // if only one owner left, can mark as writable
+            auto [remaining_pid, remaining_vpn] = owners[0];
+            processes[remaining_pid]->get_page_table().lookup(remaining_vpn)->writable = true;
+        }
+    }
+    frame_to_owners[new_frame] = {{pid, vpn}}; // add new ownership
 }
