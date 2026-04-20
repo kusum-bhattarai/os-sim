@@ -21,6 +21,7 @@ public:
     void create_process(int pid);   // creates a new process with an empty page table
     void access(int pid, int virtual_address, bool is_write);  // simulates a memory access, updates metrics, and handles page faults
     void print_metrics() const {metrics.print();}
+    const Metrics& get_metrics() const { return metrics;}
     void reset_metrics() { metrics.reset(); }
     void fork_process(int parent_pid, int child_pid); // creates a new process with a copy of the parent's page table (for CoW implementation)
     void handle_cow(int pid, int vpn, PageTableEntry* entry);
