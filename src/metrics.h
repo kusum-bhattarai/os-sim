@@ -1,3 +1,5 @@
+#pragma once
+
 struct Metrics {
     int page_faults = 0;
     int hits = 0;
