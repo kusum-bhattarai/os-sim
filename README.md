@@ -1,2 +1,135 @@
 # os-sim
-just experimenting with what i learnt about mmu in OS class.
+
+A virtual memory simulator written in C++17. Built to understand how operating systems manage physical memory — from frame allocation and address translation to page replacement and copy-on-write.
+
+This was a personal project to solidify what I learned in my OS course.
+
+---
+
+## What it simulates
+
+**Virtual address translation**
+Each process has its own page table mapping virtual page numbers to physical frame indices. The `MemoryManager` handles address translation, detects page faults, and loads pages into physical frames.
+
+**Physical frame management**
+A `FramePool` manages a fixed set of physical frames. It tracks which frames are in use, maintains reference counts (for CoW sharing), and zeroes frames on deallocation.
+
+**Page replacement policies**
+When all frames are occupied and a new page must be loaded, a replacement policy picks the victim frame:
+
+- **FIFO** — evicts the frame that has been in memory the longest
+- **LRU** — evicts the frame that was least recently accessed, tracked with a doubly-linked list and hash map for O(1) updates
+- **OPT** — evicts the frame whose next use is farthest in the future (Belady's algorithm); requires the full access sequence upfront, so it serves as a theoretical lower bound on faults
+
+**Copy-on-Write (CoW)**
+`fork_process(parent, child)` creates a child process that shares the parent's physical frames rather than copying them. All shared pages are marked read-only. On the first write by either process, the writing process gets its own private copy of that frame. Once only one process owns a frame, it becomes writable again with no further overhead.
+
+Reference counts on frames track how many processes share each frame. A frame is only freed when its reference count reaches zero.
+
+---
+
+## What I learned
+
+- Why page tables exist and how virtual-to-physical translation works at the hardware/OS boundary
+- The trade-offs between FIFO, LRU, and OPT — LRU is practical but still gets more faults than OPT; FIFO is simpler but suffers from Belady's anomaly (more frames can cause more faults)
+- How LRU can be implemented in O(1) using a linked list + hash map rather than scanning all frames on every access
+- How fork() in Unix systems avoids copying the entire address space by deferring copies until a write actually happens — and how reference counting makes this safe
+- How metrics like copies-avoided show that CoW is most efficient under read-heavy workloads after a fork, and most costly when both processes immediately write to the same pages
+
+---
+
+## Project structure
+
+```
+src/
+  frame_pool.h/cpp         physical frame allocator with ref counting
+  page_table.h/cpp         per-process virtual-to-physical mapping
+  memory_manager.h/cpp     core simulator: fault handling, CoW, metrics
+  process.h                process abstraction (holds a page table)
+  metrics.h/cpp            tracks faults, hits, evictions, CoW events
+  constants.h              PAGE_SIZE, NUM_FRAMES, address space size
+  policy/
+    replacement_policy.h   abstract base class
+    fifo.h/cpp
+    lru.h/cpp
+    opt.h/cpp
+
+tests/
+  test_frame_pool.cpp
+  test_page_table.cpp
+  test_memory_manager.cpp
+  test_fifo.cpp
+  test_lru.cpp
+  test_opt.cpp
+  test_cow.cpp             14 tests covering fork, CoW reads, CoW writes,
+                           last-owner write restoration, multi-page forks
+
+experiments/
+  exp_utils.h                       shared table formatting
+  exp_a_algorithm_comparison.cpp    FIFO vs LRU vs OPT on the same sequence
+  exp_b_frame_sensitivity.cpp       how fault count changes as frame count grows
+  exp_c_cow_read_heavy.cpp          fork + reads only — zero copies needed
+  exp_d_cow_write_heavy.cpp         fork + writes to all pages — full copy cost
+  exp_e_write_timing.cpp            pre-fork vs post-fork write cost comparison
+```
+
+---
+
+## Future work
+
+**TLB simulation**
+Every access currently goes straight to the page table. A real CPU caches recent translations in a Translation Lookaside Buffer — a small, fully-associative hardware cache. Adding a TLB in front of the page table would show how much of the translation overhead disappears under locality-heavy workloads, and introduce realistic TLB miss penalties and shootdown costs when pages are evicted.
+
+**Multi-level page tables**
+The current page table is a flat hash map over the full virtual address space. Real systems (x86-64 uses 4 levels) break the virtual address into chunks, each indexing into a tree of smaller tables. Most of the tree is never allocated — only the paths to pages actually in use. Worth implementing to understand how the OS avoids storing entries for the entire address space while keeping lookup depth bounded.
+
+**Alternative page table structures**
+Beyond hierarchical tables, there are two other designs worth understanding:
+
+- *Hashed page tables* — the VPN is hashed into a bucket; collisions are chained. Common in systems with large, sparse address spaces. Lookup is O(1) average but degrades under hash collisions.
+- *Inverted page tables* — instead of one table per process indexed by VPN, there is one global table indexed by physical frame number, storing which process and VPN owns each frame. Scales with physical memory rather than virtual address space size, but makes forward lookup (VPN → frame) expensive without a hash index on top.
+
+**CLOCK algorithm**
+The CLOCK algorithm (second-chance) approximates LRU using only a reference bit per frame and a circular scan, which is how most real OS kernels implement page replacement. The trade-off compared to this project's LRU implementation is worth noting: LRU here uses a doubly-linked list and hash map to achieve O(1) exact recency tracking, while CLOCK is O(n) in the worst case but has much lower constant overhead per access — no pointer manipulation on every hit, just a bit set. In practice CLOCK wins on real workloads because the per-access cost of maintaining the LRU list is paid on every memory reference, not just on eviction.
+
+**Working set model**
+Rather than evicting based on recency alone, the working set model tracks which pages each process has accessed within a sliding time window and only keeps those in memory. Pages that fall out of the window are candidates for eviction even if frames are available. This models the principle that processes have phases of execution with distinct locality, and that keeping cold pages in memory to avoid future faults is not always worth the cost.
+
+**Custom memory allocator**
+The logical next step from this project. The frame pool here manages fixed-size physical frames — a real allocator has to handle variable-size requests, fragmentation, and alignment. Two allocator designs that build directly on the ideas here:
+
+- *Slab allocator* — pre-allocates slabs of fixed-size objects for common allocation sizes (used by the Linux kernel for kernel objects). Eliminates fragmentation for known sizes and makes alloc/free O(1).
+- *Buddy allocator* — splits memory into power-of-two blocks and merges adjacent free blocks back together on free. Balances fragmentation and coalescing cost, and is what the Linux kernel uses for page-level allocation under the hood.
+
+---
+
+## Build
+
+Requires CMake 3.15+ and a C++17 compiler.
+
+```bash
+cmake -S . -B build
+cmake --build build
+```
+
+## Run tests
+
+```bash
+./build/test_frame_pool
+./build/test_page_table
+./build/test_fifo
+./build/test_lru
+./build/test_opt
+./build/test_memory_manager
+./build/test_cow
+```
+
+## Run experiments
+
+```bash
+./build/exp_a    # algorithm comparison
+./build/exp_b    # frame count sensitivity
+./build/exp_c    # CoW read-heavy
+./build/exp_d    # CoW write-heavy
+./build/exp_e    # write timing
+```
