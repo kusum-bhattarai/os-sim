@@ -15,7 +15,34 @@ void MemoryManager::access(int pid, int virtual_address, bool is_write){
     Process& proc = *processes[pid];
     PageTable& pt = proc.get_page_table();
     int vpn = virtual_address / PAGE_SIZE;
-    // int offset = virtual_address % PAGE_SIZE;
+
+    // TLB lookup first
+    int tlb_result = proc.get_tlb().lookup(vpn);
+    if (tlb_result != -1) {
+        // TLB hit — skip page table entirely
+        metrics.tlb_hits++;
+        PageTableEntry* entry = pt.lookup(vpn);
+        entry->referenced = true;
+
+        if (!is_write && !entry->writable) {
+            int ref = frame_pool.get_frame(entry->frame_index).ref_count;
+            if (ref > 1) metrics.cow_copies_avoided++;
+        }
+
+        if (is_write) {
+            if (!entry->writable) {
+                handle_cow(pid, vpn, entry);
+                proc.get_tlb().insert(vpn, entry->frame_index, true); // update TLB after CoW
+                metrics.cow_copies++;
+            }
+            entry->dirty = true;
+        }
+        policy->on_access(entry->frame_index);
+        return; // done, skip page table
+    }
+
+    // TLB miss: fall through to page table
+    metrics.tlb_misses++;
     int physical_address = pt.translate(virtual_address);
 
     if (physical_address == -1){
@@ -25,47 +52,44 @@ void MemoryManager::access(int pid, int virtual_address, bool is_write){
         metrics.page_faults++;
         int frame_index;
         try {
-            frame_index = frame_pool.allocate(); 
+            frame_index = frame_pool.allocate();
         } catch (const std::runtime_error&) {
-            // no free frames, need to evict
             int victim_frame = policy->evict();
             for (auto& [owner_pid, owner_vpn] : frame_to_owners[victim_frame]) {
                 processes[owner_pid]->get_page_table().invalidate(owner_vpn);
+                processes[owner_pid]->get_tlb().invalidate(owner_vpn); // invalidate TLB too
             }
             frame_to_owners[victim_frame].clear();
             frame_index = victim_frame;
             metrics.evictions++;
-        } 
+        }
         pt.insert(vpn, frame_index);
-        pt.lookup(vpn)->writable = true; // new page is writable
-        frame_to_owners[frame_index] = {{pid, vpn}};    // single owner 
+        pt.lookup(vpn)->writable = true;
+        frame_to_owners[frame_index] = {{pid, vpn}};
         policy->on_load(frame_index, vpn);
+        proc.get_tlb().insert(vpn, frame_index, true); // load into TLB
     } else {
-        // page hit
+        // page hit via page table
         metrics.hits++;
         PageTableEntry* entry = pt.lookup(vpn);
         entry->referenced = true;
 
         if (!is_write && !entry->writable) {
             int ref = frame_pool.get_frame(entry->frame_index).ref_count;
-            if (ref > 1) {
-                metrics.cow_copies_avoided++;
-            }
+            if (ref > 1) metrics.cow_copies_avoided++;
         }
 
-        if (is_write){
-            if (!entry->writable){
-                // if page is CoW, need to copy to a new frame
+        if (is_write) {
+            if (!entry->writable) {
                 handle_cow(pid, vpn, entry);
-                policy->on_load(entry->frame_index, vpn);
                 metrics.cow_copies++;
-            } 
+            }
             entry->dirty = true;
         }
         policy->on_access(entry->frame_index);
+        proc.get_tlb().insert(vpn, entry->frame_index, entry->writable); // load into TLB
     }
 }
-
 void MemoryManager::fork_process(int parent_pid, int child_pid){
     if (processes.count(parent_pid) == 0){
         throw std::runtime_error("Parent process does not exist");
