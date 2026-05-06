@@ -21,6 +21,7 @@ void MemoryManager::access(int pid, int virtual_address, bool is_write){
     if (tlb_result != -1) {
         // TLB hit — skip page table entirely
         metrics.tlb_hits++;
+        metrics.hits++;
         PageTableEntry* entry = pt.lookup(vpn);
         entry->referenced = true;
 
