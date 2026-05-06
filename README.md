@@ -26,6 +26,9 @@ When all frames are occupied and a new page must be loaded, a replacement policy
 
 Reference counts on frames track how many processes share each frame. A frame is only freed when its reference count reaches zero.
 
+**Translation Lookaside Buffer (TLB)**
+Each process has a 16-entry fully-associative TLB that caches recent virtual-to-physical translations. On every access the TLB is checked first; only on a miss does the simulator fall through to the page table. The TLB uses LRU eviction among its entries. When a page is evicted from physical memory all owning processes have their TLB entry for that page invalidated (TLB shootdown). CoW writes that relocate a page to a new frame update the TLB immediately so subsequent accesses hit without a page-table walk. The simulator tracks TLB hits, misses, and hit rate alongside the existing page-fault and eviction metrics.
+
 ---
 
 ## What I learned
@@ -35,6 +38,10 @@ Reference counts on frames track how many processes share each frame. A frame is
 - How LRU can be implemented in O(1) using a linked list + hash map rather than scanning all frames on every access
 - How fork() in Unix systems avoids copying the entire address space by deferring copies until a write actually happens — and how reference counting makes this safe
 - How metrics like copies-avoided show that CoW is most efficient under read-heavy workloads after a fork, and most costly when both processes immediately write to the same pages
+- How the TLB acts as a cache in front of the page table, and why TLB coherence requires shootdowns when frames are evicted or CoW remaps a page to a new frame
+- How TLB hit rate is driven entirely by access locality, not by whether pages are in memory — a tight 8-page working set gets 93.8% hit rate while a 32-page sequential scan (larger than the 16-entry TLB) gets 0%, the same thrashing dynamic that affects page replacement but one level up
+- How TLB hit rate has a sharp cliff at the working-set boundary rather than a gradual curve — with a 20-page working set, TLB sizes of 4, 8, and 16 all get 0% (thrashing), while size 32 jumps to 90% because the full working set fits and the first-pass cold misses are amortized over all subsequent rounds
+- How evictions and TLB hit rate are tightly coupled through shootdowns — with enough frames to hold the full working set there are zero evictions and a 90% hit rate, but reducing frames below the working-set size causes constant evictions that shoot down TLB entries faster than they can be reused, collapsing hit rate to 0%
 
 ---
 
@@ -44,10 +51,11 @@ Reference counts on frames track how many processes share each frame. A frame is
 src/
   frame_pool.h/cpp         physical frame allocator with ref counting
   page_table.h/cpp         per-process virtual-to-physical mapping
-  memory_manager.h/cpp     core simulator: fault handling, CoW, metrics
-  process.h                process abstraction (holds a page table)
-  metrics.h/cpp            tracks faults, hits, evictions, CoW events
-  constants.h              PAGE_SIZE, NUM_FRAMES, address space size
+  tlb.h/cpp                per-process TLB: 16-entry fully-associative, LRU eviction
+  memory_manager.h/cpp     core simulator: fault handling, CoW, TLB, metrics
+  process.h                process abstraction (holds a page table and TLB)
+  metrics.h/cpp            tracks faults, hits, evictions, CoW events, TLB hits/misses
+  constants.h              PAGE_SIZE, NUM_FRAMES, TLB_SIZE, address space size
   policy/
     replacement_policy.h   abstract base class
     fifo.h/cpp
@@ -57,7 +65,8 @@ src/
 tests/
   test_frame_pool.cpp
   test_page_table.cpp
-  test_memory_manager.cpp
+  test_tlb.cpp             12 unit tests: lookup, insert, LRU eviction, invalidate, flush
+  test_memory_manager.cpp  14 core tests + 5 TLB integration tests
   test_fifo.cpp
   test_lru.cpp
   test_opt.cpp
@@ -71,14 +80,14 @@ experiments/
   exp_c_cow_read_heavy.cpp          fork + reads only — zero copies needed
   exp_d_cow_write_heavy.cpp         fork + writes to all pages — full copy cost
   exp_e_write_timing.cpp            pre-fork vs post-fork write cost comparison
+  exp_f_tlb_locality.cpp            TLB hit rate vs access pattern locality
+  exp_g_tlb_size_sweep.cpp          TLB hit rate vs TLB size (working-set cliff)
+  exp_h_tlb_shootdown_cost.cpp      how evictions suppress TLB hit rate
 ```
 
 ---
 
 ## Future work
-
-**TLB simulation**
-Every access currently goes straight to the page table. A real CPU caches recent translations in a Translation Lookaside Buffer — a small, fully-associative hardware cache. Adding a TLB in front of the page table would show how much of the translation overhead disappears under locality-heavy workloads, and introduce realistic TLB miss penalties and shootdown costs when pages are evicted.
 
 **Multi-level page tables**
 The current page table is a flat hash map over the full virtual address space. Real systems (x86-64 uses 4 levels) break the virtual address into chunks, each indexing into a tree of smaller tables. Most of the tree is never allocated — only the paths to pages actually in use. Worth implementing to understand how the OS avoids storing entries for the entire address space while keeping lookup depth bounded.
@@ -117,6 +126,7 @@ cmake --build build
 ```bash
 ./build/test_frame_pool
 ./build/test_page_table
+./build/test_tlb
 ./build/test_fifo
 ./build/test_lru
 ./build/test_opt
@@ -132,4 +142,7 @@ cmake --build build
 ./build/exp_c    # CoW read-heavy
 ./build/exp_d    # CoW write-heavy
 ./build/exp_e    # write timing
+./build/exp_f    # TLB hit rate vs access locality
+./build/exp_g    # TLB hit rate vs TLB size
+./build/exp_h    # TLB shootdown impact on hit rate
 ```
