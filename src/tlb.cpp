@@ -1,5 +1,7 @@
 #include "tlb.h"
 
+TLB::TLB(size_t capacity) : entries(capacity) {}
+
 int TLB::lookup(int vpn) {
     for (auto& entry : entries) {
         if (entry.valid && entry.vpn == vpn) {

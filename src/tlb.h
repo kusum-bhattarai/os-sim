@@ -1,5 +1,5 @@
 #pragma once
-#include <array>
+#include <vector>
 #include "constants.h"
 
 struct TLBEntry {
@@ -7,13 +7,14 @@ struct TLBEntry {
     int  vpn         = -1;
     int  frame_index = -1;
     bool writable    = false;
-    int  lru_tick    = 0;   // for LRU eviction within TLB
+    int  lru_tick    = 0;
 };
 
 class TLB {
-    int tick = 0;          // global access counter for LRU
-    std::array<TLBEntry, TLB_SIZE> entries;
+    int tick = 0;
+    std::vector<TLBEntry> entries;
 public:
+    explicit TLB(size_t capacity = TLB_SIZE);
     // returns frame_index on hit, -1 on miss
     int lookup(int vpn);
 
