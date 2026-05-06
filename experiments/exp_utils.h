@@ -2,6 +2,7 @@
 #include <iomanip>
 #include <iostream>
 #include <string>
+#include <cstddef>
 #include "metrics.h"
 
 static constexpr int TABLE_WIDTH = 46;
@@ -67,6 +68,42 @@ inline void print_cow_metrics(const Metrics& m) {
     row("CoW Forks",       m.cow_forks);
     row("CoW Copies",      m.cow_copies);
     row("Copies Avoided",  m.cow_copies_avoided);
+}
+
+// --- TLB locality table (exp_f) ---
+inline void print_tlb_pattern_header() {
+    std::cout << std::left  << std::setw(20) << "Pattern"
+              << std::right << std::setw(10) << "TLB Hits"
+                            << std::setw(12) << "TLB Misses"
+                            << std::setw(12) << "Hit Rate" << "\n";
+    print_separator('-');
+}
+
+inline void print_tlb_pattern_row(const std::string& name, const Metrics& m) {
+    int total = m.tlb_hits + m.tlb_misses;
+    double rate = total > 0 ? 100.0 * m.tlb_hits / total : 0.0;
+    std::cout << std::left  << std::setw(20) << name
+              << std::right << std::setw(10) << m.tlb_hits
+                            << std::setw(12) << m.tlb_misses
+                            << std::setw(11) << std::fixed << std::setprecision(1) << rate << "%\n";
+}
+
+// --- TLB size sweep table (exp_g) ---
+inline void print_tlb_size_header() {
+    std::cout << std::right << std::setw(10) << "TLB Size"
+                            << std::setw(12) << "TLB Hits"
+                            << std::setw(12) << "TLB Misses"
+                            << std::setw(12) << "Hit Rate" << "\n";
+    print_separator('-');
+}
+
+inline void print_tlb_size_row(size_t tlb_size, const Metrics& m) {
+    int total = m.tlb_hits + m.tlb_misses;
+    double rate = total > 0 ? 100.0 * m.tlb_hits / total : 0.0;
+    std::cout << std::right << std::setw(10) << tlb_size
+                            << std::setw(12) << m.tlb_hits
+                            << std::setw(12) << m.tlb_misses
+                            << std::setw(11) << std::fixed << std::setprecision(1) << rate << "%\n";
 }
 
 // --- Write timing phase table (exp_e) ---
