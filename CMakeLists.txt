@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(SOURCES
     src/frame_pool.cpp
     src/page_table.cpp
+    src/tlb.cpp
     src/policy/fifo.cpp
     src/policy/lru.cpp
     src/policy/opt.cpp
@@ -51,12 +52,19 @@ add_executable(test_cow
     ${SOURCES}
 )
 
+add_executable(test_tlb
+    tests/test_tlb.cpp
+    ${SOURCES}
+)
+
 target_include_directories(test_frame_pool PRIVATE src)
 target_include_directories(test_page_table PRIVATE src)
 target_include_directories(test_fifo PRIVATE src)
 target_include_directories(test_lru PRIVATE src)
 target_include_directories(test_opt PRIVATE src)
 target_include_directories(test_cow PRIVATE src)
+target_include_directories(test_memory_manager PRIVATE src)
+target_include_directories(test_tlb PRIVATE src)
 
 # --- experiment executables ---
 add_executable(exp_a experiments/exp_a_algorithm_comparison.cpp ${SOURCES})
@@ -64,9 +72,15 @@ add_executable(exp_b experiments/exp_b_frame_sensitivity.cpp ${SOURCES})
 add_executable(exp_c experiments/exp_c_cow_read_heavy.cpp ${SOURCES})
 add_executable(exp_d experiments/exp_d_cow_write_heavy.cpp ${SOURCES})
 add_executable(exp_e experiments/exp_e_write_timing.cpp ${SOURCES})
+add_executable(exp_f experiments/exp_f_tlb_locality.cpp ${SOURCES})
+add_executable(exp_g experiments/exp_g_tlb_size_sweep.cpp ${SOURCES})
+add_executable(exp_h experiments/exp_h_tlb_shootdown_cost.cpp ${SOURCES})
 
 target_include_directories(exp_a PRIVATE src experiments)
 target_include_directories(exp_b PRIVATE src experiments)
 target_include_directories(exp_c PRIVATE src experiments)
 target_include_directories(exp_d PRIVATE src experiments)
 target_include_directories(exp_e PRIVATE src experiments)
+target_include_directories(exp_f PRIVATE src experiments)
+target_include_directories(exp_g PRIVATE src experiments)
+target_include_directories(exp_h PRIVATE src experiments)
