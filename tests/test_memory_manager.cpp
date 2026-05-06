@@ -165,6 +165,76 @@ void test_full_sequence_lru_fault_count() {
     std::cout << "PASS: test_full_sequence_lru_fault_count\n";
 }
 
+// ─── TLB metrics ─────────────────────────────────────────────────────
+
+void test_tlb_miss_on_first_access() {
+    auto mm = make_fifo_manager();
+    mm.create_process(1);
+    mm.access(1, 0, false);
+    const auto& m = mm.get_metrics();
+    assert(m.tlb_misses == 1);
+    assert(m.tlb_hits   == 0);
+    std::cout << "PASS: test_tlb_miss_on_first_access\n";
+}
+
+void test_tlb_hit_on_second_access() {
+    auto mm = make_fifo_manager();
+    mm.create_process(1);
+    mm.access(1, 0, false); // fault + TLB miss
+    mm.reset_metrics();
+    mm.access(1, 0, false); // TLB hit
+    const auto& m = mm.get_metrics();
+    assert(m.tlb_hits   == 1);
+    assert(m.tlb_misses == 0);
+    assert(m.hits       == 1);
+    assert(m.page_faults == 0);
+    std::cout << "PASS: test_tlb_hit_on_second_access\n";
+}
+
+void test_tlb_shootdown_on_eviction() {
+    // vpn 0 is loaded, then evicted when vpn 2 comes in (2-frame FIFO)
+    // the TLB entry for vpn 0 must be invalidated so the next access faults
+    auto mm = make_fifo_manager(2);
+    mm.create_process(1);
+    mm.access(1, 0 * PAGE_SIZE, false); // vpn 0 → frame 0
+    mm.access(1, 1 * PAGE_SIZE, false); // vpn 1 → frame 1
+    mm.access(1, 2 * PAGE_SIZE, false); // evicts vpn 0, shoots down its TLB entry
+    mm.reset_metrics();
+    mm.access(1, 0 * PAGE_SIZE, false); // vpn 0 was evicted → must be a miss + fault
+    const auto& m = mm.get_metrics();
+    assert(m.tlb_misses  == 1);
+    assert(m.tlb_hits    == 0);
+    assert(m.page_faults == 1);
+    std::cout << "PASS: test_tlb_shootdown_on_eviction\n";
+}
+
+void test_tlb_coherent_after_cow() {
+    // after a CoW write the TLB must reflect the new frame;
+    // a second write to the same VPN should be a plain TLB hit with no CoW copy
+    auto mm = make_fifo_manager();
+    mm.create_process(1);
+    mm.access(1, 0, false);          // load vpn 0 for process 1
+    mm.fork_process(1, 2);           // share the frame; both marked read-only
+    mm.access(1, 0, true);           // CoW: process 1 gets a new frame, TLB updated
+    mm.reset_metrics();
+    mm.access(1, 0, true);           // second write — must be TLB hit, no CoW copy
+    const auto& m = mm.get_metrics();
+    assert(m.tlb_hits   == 1);
+    assert(m.cow_copies == 0);
+    std::cout << "PASS: test_tlb_coherent_after_cow\n";
+}
+
+void test_tlb_metrics_sum_equals_total_accesses() {
+    auto mm = make_fifo_manager(4);
+    mm.create_process(1);
+    // 3 unique pages: first 3 accesses are misses, next 3 are TLB hits
+    std::vector<int> seq = {0, 1, 2, 0, 1, 2};
+    for (int vpn : seq) mm.access(1, vpn * PAGE_SIZE, false);
+    const auto& m = mm.get_metrics();
+    assert(m.tlb_hits + m.tlb_misses == (int)seq.size());
+    std::cout << "PASS: test_tlb_metrics_sum_equals_total_accesses\n";
+}
+
 int main() {
     test_create_process();
     test_duplicate_process_throws();
@@ -180,6 +250,11 @@ int main() {
     test_two_processes_independent_page_tables();
     test_full_sequence_fifo_fault_count();
     test_full_sequence_lru_fault_count();
+    test_tlb_miss_on_first_access();
+    test_tlb_hit_on_second_access();
+    test_tlb_shootdown_on_eviction();
+    test_tlb_coherent_after_cow();
+    test_tlb_metrics_sum_equals_total_accesses();
 
     std::cout << "\nAll MemoryManager tests passed.\n";
     return 0;
