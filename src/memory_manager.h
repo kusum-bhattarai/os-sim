@@ -13,10 +13,12 @@ private:
     Metrics metrics;
     std::unique_ptr<ReplacementPolicy> policy;
     std::unordered_map<int,std::unique_ptr<Process>> processes; // pid -> process
-    std::unordered_map<int, std::vector<std::pair<int,int>>> frame_to_owners;  // frame_index -> list of {pid, vpn} owning this frame (for CoW)
+    std::unordered_map<int, std::vector<std::pair<int,int>>> frame_to_owners;
+    size_t tlb_size;
 
 public:
-    MemoryManager(ReplacementPolicy* policy, int num_frames = NUM_FRAMES): policy(policy), frame_pool(num_frames) {}
+    MemoryManager(ReplacementPolicy* policy, int num_frames = NUM_FRAMES, size_t tlb_size = TLB_SIZE)
+        : policy(policy), frame_pool(num_frames), tlb_size(tlb_size) {}
 
     void create_process(int pid);   // creates a new process with an empty page table
     void access(int pid, int virtual_address, bool is_write);  // simulates a memory access, updates metrics, and handles page faults

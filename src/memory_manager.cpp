@@ -5,7 +5,7 @@ void MemoryManager::create_process(int pid){
     if (processes.count(pid) > 0){
         throw std::runtime_error("Process with this PID already exists");
     }
-    processes[pid] = std::make_unique<Process>(pid);
+    processes[pid] = std::make_unique<Process>(pid, tlb_size);
 }
 
 void MemoryManager::access(int pid, int virtual_address, bool is_write){
