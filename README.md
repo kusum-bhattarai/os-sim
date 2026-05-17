@@ -19,6 +19,7 @@ When all frames are occupied and a new page must be loaded, a replacement policy
 
 - **FIFO** — evicts the frame that has been in memory the longest
 - **LRU** — evicts the frame that was least recently accessed, tracked with a doubly-linked list and hash map for O(1) updates
+- **CLOCK** — approximates LRU using a reference bit per frame and a circular hand; recently accessed frames get one second chance before eviction, with no pointer manipulation on every access
 - **OPT** — evicts the frame whose next use is farthest in the future (Belady's algorithm); requires the full access sequence upfront, so it serves as a theoretical lower bound on faults
 
 **Copy-on-Write (CoW)**
@@ -42,6 +43,7 @@ Each process has a 16-entry fully-associative TLB that caches recent virtual-to-
 - How TLB hit rate is driven entirely by access locality, not by whether pages are in memory — a tight 8-page working set gets 93.8% hit rate while a 32-page sequential scan (larger than the 16-entry TLB) gets 0%, the same thrashing dynamic that affects page replacement but one level up
 - How TLB hit rate has a sharp cliff at the working-set boundary rather than a gradual curve — with a 20-page working set, TLB sizes of 4, 8, and 16 all get 0% (thrashing), while size 32 jumps to 90% because the full working set fits and the first-pass cold misses are amortized over all subsequent rounds
 - How evictions and TLB hit rate are tightly coupled through shootdowns — with enough frames to hold the full working set there are zero evictions and a 90% hit rate, but reducing frames below the working-set size causes constant evictions that shoot down TLB entries faster than they can be reused, collapsing hit rate to 0%
+- Why CLOCK is what real OS kernels use instead of LRU — exact LRU requires updating a recency structure on every single memory access, while CLOCK only sets a bit on access and does the recency work at eviction time; the approximation quality is close enough in practice that the per-access overhead saving dominates
 
 ---
 
@@ -60,6 +62,7 @@ src/
     replacement_policy.h   abstract base class
     fifo.h/cpp
     lru.h/cpp
+    clock.h/cpp            second-chance approximation of LRU
     opt.h/cpp
 
 tests/
@@ -69,6 +72,7 @@ tests/
   test_memory_manager.cpp  14 core tests + 5 TLB integration tests
   test_fifo.cpp
   test_lru.cpp
+  test_clock.cpp           6 tests: second chance, access protection, fault count
   test_opt.cpp
   test_cow.cpp             14 tests covering fork, CoW reads, CoW writes,
                            last-owner write restoration, multi-page forks
@@ -98,9 +102,6 @@ Beyond hierarchical tables, there are two other designs worth understanding:
 - *Hashed page tables* — the VPN is hashed into a bucket; collisions are chained. Common in systems with large, sparse address spaces. Lookup is O(1) average but degrades under hash collisions.
 - *Inverted page tables* — instead of one table per process indexed by VPN, there is one global table indexed by physical frame number, storing which process and VPN owns each frame. Scales with physical memory rather than virtual address space size, but makes forward lookup (VPN → frame) expensive without a hash index on top.
 
-**CLOCK algorithm**
-The CLOCK algorithm (second-chance) approximates LRU using only a reference bit per frame and a circular scan, which is how most real OS kernels implement page replacement. The trade-off compared to this project's LRU implementation is worth noting: LRU here uses a doubly-linked list and hash map to achieve O(1) exact recency tracking, while CLOCK is O(n) in the worst case but has much lower constant overhead per access — no pointer manipulation on every hit, just a bit set. In practice CLOCK wins on real workloads because the per-access cost of maintaining the LRU list is paid on every memory reference, not just on eviction.
-
 **Working set model**
 Rather than evicting based on recency alone, the working set model tracks which pages each process has accessed within a sliding time window and only keeps those in memory. Pages that fall out of the window are candidates for eviction even if frames are available. This models the principle that processes have phases of execution with distinct locality, and that keeping cold pages in memory to avoid future faults is not always worth the cost.
 
@@ -129,6 +130,7 @@ cmake --build build
 ./build/test_tlb
 ./build/test_fifo
 ./build/test_lru
+./build/test_clock
 ./build/test_opt
 ./build/test_memory_manager
 ./build/test_cow
