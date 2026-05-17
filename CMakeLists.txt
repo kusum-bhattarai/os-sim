@@ -9,6 +9,7 @@ set(SOURCES
     src/frame_pool.cpp
     src/page_table.cpp
     src/tlb.cpp
+    src/policy/clock.cpp
     src/policy/fifo.cpp
     src/policy/lru.cpp
     src/policy/opt.cpp
