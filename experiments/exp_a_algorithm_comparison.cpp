@@ -1,5 +1,6 @@
 #include "exp_utils.h"
 #include "memory_manager.h"
+#include "policy/clock.h"
 #include "policy/fifo.h"
 #include "policy/lru.h"
 #include "policy/opt.h"
@@ -30,6 +31,12 @@ int main() {
         mm.create_process(1);
         run(mm, 1);
         print_algo_row("LRU", mm.get_metrics());
+    }
+    {
+        MemoryManager mm(new Clock(), FRAMES);
+        mm.create_process(1);
+        run(mm, 1);
+        print_algo_row("CLOCK", mm.get_metrics());
     }
     {
         MemoryManager mm(new OPT(SEQUENCE), FRAMES);
