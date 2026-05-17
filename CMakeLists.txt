@@ -58,6 +58,11 @@ add_executable(test_tlb
     ${SOURCES}
 )
 
+add_executable(test_clock
+    tests/test_clock.cpp
+    ${SOURCES}
+)
+
 target_include_directories(test_frame_pool PRIVATE src)
 target_include_directories(test_page_table PRIVATE src)
 target_include_directories(test_fifo PRIVATE src)
@@ -66,6 +71,7 @@ target_include_directories(test_opt PRIVATE src)
 target_include_directories(test_cow PRIVATE src)
 target_include_directories(test_memory_manager PRIVATE src)
 target_include_directories(test_tlb PRIVATE src)
+target_include_directories(test_clock PRIVATE src)
 
 # --- experiment executables ---
 add_executable(exp_a experiments/exp_a_algorithm_comparison.cpp ${SOURCES})
