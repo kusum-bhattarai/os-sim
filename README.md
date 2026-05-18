@@ -113,6 +113,37 @@ The logical next step from this project. The frame pool here manages fixed-size 
 
 ---
 
+## Results
+
+**Page replacement — algorithm comparison** (`exp_a`, sequence `[1,2,3,4,1,2,5,1,2,3,4,5]`, 3 frames)
+
+```
+Algorithm       Faults    Hits   Evictions
+----------------------------------------------
+FIFO                 9       3           6
+LRU                 10       2           7
+CLOCK                9       3           6
+OPT                  8       4           5
+```
+
+CLOCK matches FIFO on this sequence and sits one fault above OPT, the theoretical minimum. LRU underperforms here due to Belady's anomaly on this specific access pattern. OPT serves as the lower bound — unachievable in practice since it requires knowing the future.
+
+**TLB size vs hit rate** (`exp_g`, 20-page working set, 200 accesses)
+
+```
+  TLB Size    TLB Hits  TLB Misses    Hit Rate
+----------------------------------------------
+         4           0         200        0.0%
+         8           0         200        0.0%
+        16           0         200        0.0%
+        32         180          20       90.0%
+        64         180          20       90.0%
+```
+
+Hit rate is binary around the working-set boundary: TLB sizes below 20 thrash to 0%, size 32 jumps to 90% because the full working set fits and cold misses are only paid once. Doubling from 32 to 64 yields no further gain.
+
+---
+
 ## Build
 
 Requires CMake 3.15+ and a C++17 compiler.
