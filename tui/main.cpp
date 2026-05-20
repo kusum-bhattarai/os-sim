@@ -329,6 +329,7 @@ static Element render_controls() {
         text("  "),
         key("a", "access"),
         key("s", "sequence"),
+        key("C", "compare"),
         key("n", "new proc"),
         key("f", "fork"),
         key("p", "presets"),
@@ -938,31 +939,33 @@ int main() {
             Modal(
                 Modal(
                     Modal(
-                        Modal(main_view, config_modal, &show_config),
-                        np_modal, &show_new_proc
+                        Modal(
+                            Modal(main_view, config_modal, &show_config),
+                            np_modal, &show_new_proc
+                        ),
+                        fork_modal, &show_fork
                     ),
-                    fork_modal, &show_fork
+                    presets_modal, &show_presets
                 ),
-                presets_modal, &show_presets
+                seq_modal, &show_seq
             ),
-            seq_modal, &show_seq
+            cmp_modal, &show_compare
         ),
-        cmp_modal, &show_compare
-    ),
         access_modal, &show_access
     );
 
     // ── Global event handling ────────────────────────────────────────────────
     auto with_events = CatchEvent(app, [&](Event e) {
         if (e == Event::Escape) {
-            if (show_access)   { show_access   = false; access_error.clear(); last_access.reset(); return true; }
-            if (show_seq)      { show_seq      = false; seq_error.clear();    seq_result.clear();  return true; }
-            if (show_presets)  { show_presets  = false; preset_error.clear();                      return true; }
-            if (show_fork)     { show_fork     = false; fork_error.clear();                        return true; }
-            if (show_new_proc) { show_new_proc = false; new_proc_error.clear();                    return true; }
-            if (show_config)   { show_config   = false; config_error.clear();                      return true; }
+            if (show_access)   { show_access   = false; access_error.clear(); last_access.reset();                    return true; }
+            if (show_compare)  { show_compare  = false; cmp_error.clear();    cmp_results.clear(); cmp_ran = false;   return true; }
+            if (show_seq)      { show_seq      = false; seq_error.clear();    seq_result.clear();                     return true; }
+            if (show_presets)  { show_presets  = false; preset_error.clear();                                         return true; }
+            if (show_fork)     { show_fork     = false; fork_error.clear();                                           return true; }
+            if (show_new_proc) { show_new_proc = false; new_proc_error.clear();                                       return true; }
+            if (show_config)   { show_config   = false; config_error.clear();                                         return true; }
         }
-        if (show_config || show_new_proc || show_fork || show_presets || show_seq || show_access) return false;
+        if (show_config || show_new_proc || show_fork || show_presets || show_seq || show_compare || show_access) return false;
 
         if (e == Event::Character('q')) { screen.ExitLoopClosure()(); return true; }
         if (e == Event::Character('a')) {
@@ -1007,6 +1010,17 @@ int main() {
             seq_error.clear();
             seq_result.clear();
             show_seq    = true;
+            return true;
+        }
+        if (e == Event::Character('C')) {
+            // Pre-fill sequence from last [s] run if the user already typed one.
+            if (cmp_seq_str.empty() && !seq_input_str.empty())
+                cmp_seq_str = seq_input_str;
+            cmp_frames_str = std::to_string(sim.get_num_frames());
+            cmp_error.clear();
+            cmp_results.clear();
+            cmp_ran      = false;
+            show_compare = true;
             return true;
         }
         if (e == Event::Character('r')) {
