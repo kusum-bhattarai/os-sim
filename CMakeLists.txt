@@ -60,7 +60,10 @@ foreach(exp IN ITEMS exp_a exp_b exp_c exp_d exp_e exp_f exp_g exp_h)
 endforeach()
 
 # --- TUI executable ---
-add_executable(os_sim_tui tui/main.cpp)
+add_executable(os_sim_tui
+    tui/main.cpp
+    tui/simulator_state.cpp
+)
 target_link_libraries(os_sim_tui
     PRIVATE
     sim_core
