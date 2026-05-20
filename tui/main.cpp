@@ -1,7 +1,7 @@
 #include <algorithm>
 #include <iomanip>
+#include <optional>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -20,6 +20,22 @@ static std::string hex_addr(int addr) {
     ss << "0x" << std::hex << std::uppercase
        << std::setw(5) << std::setfill('0') << addr;
     return ss.str();
+}
+
+static int parse_address(const std::string& s) {
+    if (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+        return std::stoi(s, nullptr, 16);
+    return std::stoi(s);
+}
+
+static Element event_tag(const AccessEvent& e) {
+    std::string label;
+    Color       col;
+    if      (e.cow_copy)                 { label = "CoW "; col = Color::Magenta; }
+    else if (e.page_fault && e.eviction) { label = "EVCT"; col = Color::Red;     }
+    else if (e.page_fault)               { label = "FALT"; col = Color::Yellow;  }
+    else                                 { label = "HIT "; col = Color::Green;   }
+    return text("[" + label + "]") | bold | color(col);
 }
 
 // ── panel renderers ───────────────────────────────────────────────────────────
@@ -73,7 +89,7 @@ static Element render_frame_pool(const SimulatorState& sim) {
     rows.push_back(separator());
     rows.push_back(hbox({
         text("  "),
-        text("□") | dim,        text(" free  ") | dim,
+        text("□") | dim,       text(" free  ") | dim,
         text("■") | color(Color::Green),  text(" used  ") | dim,
         text("◉") | color(Color::Yellow), text(" shared (CoW)") | dim,
     }));
@@ -172,16 +188,8 @@ static Element render_log(const SimulatorState& sim) {
     int start = std::max(0, static_cast<int>(events.size()) - 8);
     for (int i = start; i < static_cast<int>(events.size()); ++i) {
         const auto& e = events[i];
-
-        std::string tag;
-        Color       tag_color;
-        if      (e.cow_copy)                 { tag = "CoW "; tag_color = Color::Magenta; }
-        else if (e.page_fault && e.eviction) { tag = "EVCT"; tag_color = Color::Red;     }
-        else if (e.page_fault)               { tag = "FALT"; tag_color = Color::Yellow;  }
-        else                                 { tag = "HIT "; tag_color = Color::Green;   }
-
         lines.push_back(hbox({
-            text("[" + tag + "]") | bold | color(tag_color),
+            event_tag(e),
             text(" P" + std::to_string(e.pid) + " "),
             text(e.is_write ? "W" : "R")
                 | color(e.is_write ? Color::Red : Color::Cyan),
@@ -260,7 +268,7 @@ int main() {
     // ── Config modal state ───────────────────────────────────────────────────
     bool show_config = false;
     int  algo_selected = static_cast<int>(sim.get_policy_type());
-    std::string frames_str  = std::to_string(sim.get_num_frames());
+    std::string frames_str = std::to_string(sim.get_num_frames());
     std::string config_error;
 
     std::vector<std::string> algo_labels = {"FIFO", "LRU", "CLOCK"};
@@ -270,13 +278,10 @@ int main() {
     auto apply_btn = Button("  Apply  ", [&] {
         int f = 0;
         try { f = std::stoi(frames_str); } catch (...) {}
-        if (f < 1 || f > 256) {
-            config_error = "Frames must be 1-256";
-            return;
-        }
+        if (f < 1 || f > 256) { config_error = "Frames must be 1-256"; return; }
         sim.reset(static_cast<PolicyType>(algo_selected), f);
         sim.create_process(0);
-        show_config  = false;
+        show_config = false;
         config_error.clear();
     });
 
@@ -298,21 +303,15 @@ int main() {
             text("  Algorithm") | dim,
             algo_radio->Render(),
             separator(),
-            hbox({
-                text("  Frames: "),
-                frames_input->Render() | size(WIDTH, EQUAL, 8),
-            }),
+            hbox({text("  Frames: "), frames_input->Render() | size(WIDTH, EQUAL, 8)}),
         };
         if (!config_error.empty())
             rows.push_back(text("  " + config_error) | color(Color::Red));
         rows.push_back(separator());
         rows.push_back(
-            hbox({apply_btn->Render(), text("  "), cfg_cancel->Render()}) | hcenter
-        );
+            hbox({apply_btn->Render(), text("  "), cfg_cancel->Render()}) | hcenter);
         return vbox(std::move(rows))
-            | border
-            | size(WIDTH, EQUAL, 34)
-            | size(HEIGHT, EQUAL, 14);
+            | border | size(WIDTH, EQUAL, 34) | size(HEIGHT, EQUAL, 14);
     });
 
     // ── New-process modal state ──────────────────────────────────────────────
@@ -325,13 +324,10 @@ int main() {
     auto create_btn = Button("  Create  ", [&] {
         int pid = -1;
         try { pid = std::stoi(new_pid_str); } catch (...) {}
-        if (pid < 0) {
-            new_proc_error = "PID must be >= 0";
-            return;
-        }
+        if (pid < 0) { new_proc_error = "PID must be >= 0"; return; }
         try {
             sim.create_process(pid);
-            show_new_proc  = false;
+            show_new_proc = false;
             new_proc_error.clear();
         } catch (const std::exception& ex) {
             new_proc_error = ex.what();
@@ -352,21 +348,105 @@ int main() {
         std::vector<Element> rows = {
             text(" New Process ") | bold | hcenter,
             separator(),
-            hbox({
-                text("  PID: "),
-                pid_input->Render() | size(WIDTH, EQUAL, 10),
-            }),
+            hbox({text("  PID: "), pid_input->Render() | size(WIDTH, EQUAL, 10)}),
         };
         if (!new_proc_error.empty())
             rows.push_back(text("  " + new_proc_error) | color(Color::Red));
         rows.push_back(separator());
         rows.push_back(
-            hbox({create_btn->Render(), text("  "), np_cancel->Render()}) | hcenter
-        );
+            hbox({create_btn->Render(), text("  "), np_cancel->Render()}) | hcenter);
         return vbox(std::move(rows))
-            | border
-            | size(WIDTH, EQUAL, 34)
-            | size(HEIGHT, EQUAL, 9);
+            | border | size(WIDTH, EQUAL, 34) | size(HEIGHT, EQUAL, 9);
+    });
+
+    // ── Access modal state ───────────────────────────────────────────────────
+    bool show_access = false;
+    std::string access_pid_str;
+    std::string access_addr_str;
+    int access_mode = 0; // 0 = Read, 1 = Write
+    std::string access_error;
+    std::optional<AccessEvent> last_access;
+
+    // execute one step — shared by button and on_enter
+    auto do_access = [&] {
+        int pid = -1, addr = -1;
+        try { pid = std::stoi(access_pid_str); } catch (...) {}
+        if (pid < 0) { access_error = "Invalid PID"; return; }
+
+        try { addr = parse_address(access_addr_str); } catch (...) {}
+        if (addr < 0) { access_error = "Invalid address"; return; }
+
+        try {
+            last_access  = sim.step(pid, addr, access_mode == 1);
+            access_error.clear();
+        } catch (const std::exception& ex) {
+            access_error = ex.what();
+        }
+    };
+
+    auto access_pid_input = Input(&access_pid_str, "PID");
+
+    InputOption addr_opt;
+    addr_opt.multiline = false;
+    addr_opt.on_enter  = [&] { do_access(); };
+    auto access_addr_input = Input(&access_addr_str, "decimal or 0x…", addr_opt);
+
+    std::vector<std::string> mode_labels = {"Read", "Write"};
+    auto access_mode_radio = Radiobox(&mode_labels, &access_mode);
+
+    auto exec_btn  = Button("  Step  ", [&] { do_access(); });
+    auto acc_close = Button(" Close ", [&] {
+        show_access  = false;
+        access_error.clear();
+        last_access.reset();
+    });
+
+    auto access_body = Container::Vertical({
+        access_pid_input,
+        access_addr_input,
+        access_mode_radio,
+        Container::Horizontal({exec_btn, acc_close}),
+    });
+
+    auto access_modal = Renderer(access_body, [&] {
+        std::vector<Element> rows = {
+            text(" Memory Access ") | bold | hcenter,
+            separator(),
+            hbox({text("  PID:     "), access_pid_input->Render()  | size(WIDTH, EQUAL, 14)}),
+            hbox({text("  Address: "), access_addr_input->Render() | size(WIDTH, EQUAL, 14)}),
+            hbox({text("  Mode:    "), access_mode_radio->Render()}),
+            separator(),
+        };
+
+        // result of last step
+        if (last_access.has_value()) {
+            const auto& e = *last_access;
+            const auto& pt_entries = sim.get_manager().get_process(e.pid)
+                                         .get_page_table().get_entries();
+            int frame = -1;
+            if (auto it = pt_entries.find(e.vpn); it != pt_entries.end())
+                frame = it->second.frame_index;
+
+            rows.push_back(hbox({
+                text("  Result: "),
+                event_tag(e),
+                text("  vpn=" + std::to_string(e.vpn)
+                    + "  frame=" + (frame >= 0 ? std::to_string(frame) : "—")) | dim,
+            }));
+        } else {
+            rows.push_back(text("  Result: —") | dim);
+        }
+
+        if (!access_error.empty())
+            rows.push_back(text("  Error:  " + access_error) | color(Color::Red));
+
+        rows.push_back(separator());
+        rows.push_back(
+            hbox({exec_btn->Render(), text("  "), acc_close->Render()}) | hcenter);
+        rows.push_back(text("  Enter on address field also steps") | dim);
+
+        return vbox(std::move(rows))
+            | border | size(WIDTH, EQUAL, 42) | size(HEIGHT, EQUAL, 14);
     });
 
     // ── Main view ────────────────────────────────────────────────────────────
@@ -392,23 +472,34 @@ int main() {
         });
     });
 
-    // ── Compose: chain two modals over the main view ─────────────────────────
+    // ── Compose: chain three modals over the main view ───────────────────────
     auto app = Modal(
-        Modal(main_view, config_modal, &show_config),
-        np_modal, &show_new_proc
+        Modal(
+            Modal(main_view, config_modal, &show_config),
+            np_modal, &show_new_proc
+        ),
+        access_modal, &show_access
     );
 
     // ── Global event handling ────────────────────────────────────────────────
     auto with_events = CatchEvent(app, [&](Event e) {
-        // Escape always closes the frontmost modal
         if (e == Event::Escape) {
+            if (show_access)   { show_access = false; access_error.clear(); last_access.reset(); return true; }
             if (show_new_proc) { show_new_proc = false; new_proc_error.clear(); return true; }
             if (show_config)   { show_config   = false; config_error.clear();   return true; }
         }
-        // All other global shortcuts are suppressed while a modal is open
-        if (show_config || show_new_proc) return false;
+        if (show_config || show_new_proc || show_access) return false;
 
         if (e == Event::Character('q')) { screen.ExitLoopClosure()(); return true; }
+        if (e == Event::Character('a')) {
+            access_pid_str  = sim.get_viewed_pid() >= 0
+                                  ? std::to_string(sim.get_viewed_pid()) : "0";
+            access_addr_str = "";
+            access_error.clear();
+            last_access.reset();
+            show_access     = true;
+            return true;
+        }
         if (e == Event::Character('c')) {
             algo_selected = static_cast<int>(sim.get_policy_type());
             frames_str    = std::to_string(sim.get_num_frames());
@@ -417,9 +508,9 @@ int main() {
             return true;
         }
         if (e == Event::Character('n')) {
-            new_pid_str   = "";
+            new_pid_str    = "";
             new_proc_error.clear();
-            show_new_proc = true;
+            show_new_proc  = true;
             return true;
         }
         if (e == Event::Tab) { sim.cycle_viewed_pid(); return true; }
