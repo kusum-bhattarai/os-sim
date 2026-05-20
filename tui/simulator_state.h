@@ -40,6 +40,10 @@ public:
     int  get_viewed_pid() const { return viewed_pid; }
     void cycle_viewed_pid();
 
+    // Public so isolated managers (e.g. comparison runs) can reuse the same
+    // policy factory without duplicating the switch.
+    static std::unique_ptr<ReplacementPolicy> make_policy(PolicyType type);
+
 private:
     PolicyType                      policy_type;
     int                             num_frames;
@@ -47,6 +51,4 @@ private:
     std::vector<AccessEvent>        log;
     int                             viewed_pid  = -1;
     Clock*                          clock_policy = nullptr; // non-owning
-
-    static std::unique_ptr<ReplacementPolicy> make_policy(PolicyType type);
 };
