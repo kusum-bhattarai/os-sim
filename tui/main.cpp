@@ -34,7 +34,8 @@ static Element event_tag(const AccessEvent& e) {
     if      (e.cow_copy)                 { label = "CoW "; col = Color::Magenta; }
     else if (e.page_fault && e.eviction) { label = "EVCT"; col = Color::Red;     }
     else if (e.page_fault)               { label = "FALT"; col = Color::Yellow;  }
-    else                                 { label = "HIT "; col = Color::Green;   }
+    else if (e.tlb_hit)                  { label = "TLB "; col = Color::Green;   }
+    else                                 { label = "PT  "; col = Color::Cyan;    }
     return text("[" + label + "]") | bold | color(col);
 }
 
@@ -181,12 +182,16 @@ static Element render_tlb(const SimulatorState& sim) {
     return window(text(title), vbox(std::move(rows)));
 }
 
-static Element render_log(const SimulatorState& sim) {
-    const auto& events = sim.get_log();
-    std::vector<Element> lines;
+static constexpr int LOG_VISIBLE = 8;
 
-    int start = std::max(0, static_cast<int>(events.size()) - 8);
-    for (int i = start; i < static_cast<int>(events.size()); ++i) {
+static Element render_log(const SimulatorState& sim, int scroll_offset) {
+    const auto& events = sim.get_log();
+    const int total  = static_cast<int>(events.size());
+    const int end    = total - scroll_offset;
+    const int start  = std::max(0, end - LOG_VISIBLE);
+
+    std::vector<Element> lines;
+    for (int i = start; i < end; ++i) {
         const auto& e = events[i];
         lines.push_back(hbox({
             event_tag(e),
@@ -201,7 +206,15 @@ static Element render_log(const SimulatorState& sim) {
     if (lines.empty())
         lines.push_back(text("  (no accesses yet)") | dim);
 
-    return window(text(" Access Log "), vbox(std::move(lines)));
+    // title shows position in history; arrow hint appears when not at bottom
+    std::string title = " Access Log ";
+    if (total > 0)
+        title += std::to_string(std::max(1, start + 1)) + "-"
+               + std::to_string(std::max(0, end)) + "/"
+               + std::to_string(total) + " ";
+    if (scroll_offset > 0) title += "↑PgUp  PgDn↓ ";
+
+    return window(text(title), vbox(std::move(lines)));
 }
 
 static Element render_metrics(const SimulatorState& sim) {
@@ -253,6 +266,7 @@ static Element render_controls() {
         key("c", "config"),
         key("r", "reset"),
         key("Tab", "next PID"),
+        key("PgUp/Dn", "scroll log"),
         key("q", "quit"),
     });
 }
@@ -264,6 +278,7 @@ int main() {
     sim.create_process(0);
 
     auto screen = ScreenInteractive::Fullscreen();
+    int log_scroll = 0; // 0 = bottom (latest); increases scrolling up into history
 
     // ── Config modal state ───────────────────────────────────────────────────
     bool show_config = false;
@@ -378,6 +393,7 @@ int main() {
 
         try {
             last_access  = sim.step(pid, addr, access_mode == 1);
+            log_scroll   = 0; // snap log back to latest entry
             access_error.clear();
         } catch (const std::exception& ex) {
             access_error = ex.what();
@@ -463,7 +479,7 @@ int main() {
             }) | flex,
             separator(),
             hbox({
-                render_log(sim) | flex,
+                render_log(sim, log_scroll) | flex,
                 separator(),
                 render_metrics(sim) | size(WIDTH, GREATER_THAN, 32),
             }) | size(HEIGHT, LESS_THAN, 13),
@@ -514,6 +530,15 @@ int main() {
             return true;
         }
         if (e == Event::Tab) { sim.cycle_viewed_pid(); return true; }
+        if (e == Event::PageUp) {
+            const int total = static_cast<int>(sim.get_log().size());
+            log_scroll = std::min(log_scroll + LOG_VISIBLE, std::max(0, total - LOG_VISIBLE));
+            return true;
+        }
+        if (e == Event::PageDown) {
+            log_scroll = std::max(log_scroll - LOG_VISIBLE, 0);
+            return true;
+        }
         return false;
     });
 
