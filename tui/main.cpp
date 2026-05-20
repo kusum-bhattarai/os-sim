@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <iomanip>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -114,9 +115,9 @@ static Element render_page_table(const SimulatorState& sim) {
                 text(std::to_string(e.frame_index))
                     | size(WIDTH, EQUAL, 7),
                 text(e.dirty    ? "  *  " : "  -  ")
-                    | color(e.dirty    ? Color::Red    : Color::GrayLight),
+                    | color(e.dirty    ? Color::Red   : Color::GrayLight),
                 text(e.writable ? "  rw " : "  r  ")
-                    | color(e.writable ? Color::Green  : Color::Yellow),
+                    | color(e.writable ? Color::Green : Color::Yellow),
             }));
         }
         if (!any)
@@ -174,13 +175,13 @@ static Element render_log(const SimulatorState& sim) {
 
         std::string tag;
         Color       tag_color;
-        if      (e.cow_copy)                { tag = "CoW "; tag_color = Color::Magenta; }
-        else if (e.page_fault && e.eviction){ tag = "EVCT"; tag_color = Color::Red;     }
-        else if (e.page_fault)              { tag = "FALT"; tag_color = Color::Yellow;  }
-        else                                { tag = "HIT "; tag_color = Color::Green;   }
+        if      (e.cow_copy)                 { tag = "CoW "; tag_color = Color::Magenta; }
+        else if (e.page_fault && e.eviction) { tag = "EVCT"; tag_color = Color::Red;     }
+        else if (e.page_fault)               { tag = "FALT"; tag_color = Color::Yellow;  }
+        else                                 { tag = "HIT "; tag_color = Color::Green;   }
 
         lines.push_back(hbox({
-            text("[" + tag + "]")  | bold | color(tag_color),
+            text("[" + tag + "]") | bold | color(tag_color),
             text(" P" + std::to_string(e.pid) + " "),
             text(e.is_write ? "W" : "R")
                 | color(e.is_write ? Color::Red : Color::Cyan),
@@ -239,7 +240,9 @@ static Element render_controls() {
     return hbox({
         text("  "),
         key("a", "access"),
+        key("n", "new proc"),
         key("f", "fork"),
+        key("c", "config"),
         key("r", "reset"),
         key("Tab", "next PID"),
         key("q", "quit"),
@@ -254,7 +257,120 @@ int main() {
 
     auto screen = ScreenInteractive::Fullscreen();
 
-    auto root = Renderer([&] {
+    // ── Config modal state ───────────────────────────────────────────────────
+    bool show_config = false;
+    int  algo_selected = static_cast<int>(sim.get_policy_type());
+    std::string frames_str  = std::to_string(sim.get_num_frames());
+    std::string config_error;
+
+    std::vector<std::string> algo_labels = {"FIFO", "LRU", "CLOCK"};
+    auto algo_radio   = Radiobox(&algo_labels, &algo_selected);
+    auto frames_input = Input(&frames_str, "count");
+
+    auto apply_btn = Button("  Apply  ", [&] {
+        int f = 0;
+        try { f = std::stoi(frames_str); } catch (...) {}
+        if (f < 1 || f > 256) {
+            config_error = "Frames must be 1-256";
+            return;
+        }
+        sim.reset(static_cast<PolicyType>(algo_selected), f);
+        sim.create_process(0);
+        show_config  = false;
+        config_error.clear();
+    });
+
+    auto cfg_cancel = Button(" Cancel ", [&] {
+        show_config = false;
+        config_error.clear();
+    });
+
+    auto config_body = Container::Vertical({
+        algo_radio,
+        frames_input,
+        Container::Horizontal({apply_btn, cfg_cancel}),
+    });
+
+    auto config_modal = Renderer(config_body, [&] {
+        std::vector<Element> rows = {
+            text(" Configuration ") | bold | hcenter,
+            separator(),
+            text("  Algorithm") | dim,
+            algo_radio->Render(),
+            separator(),
+            hbox({
+                text("  Frames: "),
+                frames_input->Render() | size(WIDTH, EQUAL, 8),
+            }),
+        };
+        if (!config_error.empty())
+            rows.push_back(text("  " + config_error) | color(Color::Red));
+        rows.push_back(separator());
+        rows.push_back(
+            hbox({apply_btn->Render(), text("  "), cfg_cancel->Render()}) | hcenter
+        );
+        return vbox(std::move(rows))
+            | border
+            | size(WIDTH, EQUAL, 34)
+            | size(HEIGHT, EQUAL, 14);
+    });
+
+    // ── New-process modal state ──────────────────────────────────────────────
+    bool show_new_proc = false;
+    std::string new_pid_str;
+    std::string new_proc_error;
+
+    auto pid_input  = Input(&new_pid_str, "e.g. 1");
+
+    auto create_btn = Button("  Create  ", [&] {
+        int pid = -1;
+        try { pid = std::stoi(new_pid_str); } catch (...) {}
+        if (pid < 0) {
+            new_proc_error = "PID must be >= 0";
+            return;
+        }
+        try {
+            sim.create_process(pid);
+            show_new_proc  = false;
+            new_proc_error.clear();
+        } catch (const std::exception& ex) {
+            new_proc_error = ex.what();
+        }
+    });
+
+    auto np_cancel = Button(" Cancel ", [&] {
+        show_new_proc = false;
+        new_proc_error.clear();
+    });
+
+    auto np_body = Container::Vertical({
+        pid_input,
+        Container::Horizontal({create_btn, np_cancel}),
+    });
+
+    auto np_modal = Renderer(np_body, [&] {
+        std::vector<Element> rows = {
+            text(" New Process ") | bold | hcenter,
+            separator(),
+            hbox({
+                text("  PID: "),
+                pid_input->Render() | size(WIDTH, EQUAL, 10),
+            }),
+        };
+        if (!new_proc_error.empty())
+            rows.push_back(text("  " + new_proc_error) | color(Color::Red));
+        rows.push_back(separator());
+        rows.push_back(
+            hbox({create_btn->Render(), text("  "), np_cancel->Render()}) | hcenter
+        );
+        return vbox(std::move(rows))
+            | border
+            | size(WIDTH, EQUAL, 34)
+            | size(HEIGHT, EQUAL, 9);
+    });
+
+    // ── Main view ────────────────────────────────────────────────────────────
+    auto main_view = Renderer([&] {
         return vbox({
             render_header(sim),
             hbox({
@@ -276,13 +392,39 @@ int main() {
         });
     });
 
-    auto with_quit = CatchEvent(root, [&](Event e) {
-        if (e == Event::Character('q')) {
-            screen.ExitLoopClosure()();
+    // ── Compose: chain two modals over the main view ─────────────────────────
+    auto app = Modal(
+        Modal(main_view, config_modal, &show_config),
+        np_modal, &show_new_proc
+    );
+
+    // ── Global event handling ────────────────────────────────────────────────
+    auto with_events = CatchEvent(app, [&](Event e) {
+        // Escape always closes the frontmost modal
+        if (e == Event::Escape) {
+            if (show_new_proc) { show_new_proc = false; new_proc_error.clear(); return true; }
+            if (show_config)   { show_config   = false; config_error.clear();   return true; }
+        }
+        // All other global shortcuts are suppressed while a modal is open
+        if (show_config || show_new_proc) return false;
+
+        if (e == Event::Character('q')) { screen.ExitLoopClosure()(); return true; }
+        if (e == Event::Character('c')) {
+            algo_selected = static_cast<int>(sim.get_policy_type());
+            frames_str    = std::to_string(sim.get_num_frames());
+            config_error.clear();
+            show_config   = true;
             return true;
         }
+        if (e == Event::Character('n')) {
+            new_pid_str   = "";
+            new_proc_error.clear();
+            show_new_proc = true;
+            return true;
+        }
+        if (e == Event::Tab) { sim.cycle_viewed_pid(); return true; }
         return false;
     });
 
-    screen.Loop(with_quit);
+    screen.Loop(with_events);
 }
