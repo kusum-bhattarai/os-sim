@@ -148,6 +148,7 @@ void MemoryManager::handle_cow(int pid, int vpn, PageTableEntry* entry){
     }
     int old_frame = entry->frame_index;
     int new_frame = frame_pool.allocate();
+    policy->on_load(new_frame, vpn); // register new frame with replacement policy
     // simulate copying data by just updating ownership and ref counts
     frame_pool.decrement_ref(old_frame); // decrement ref for old frame
     entry->frame_index = new_frame; // point to new frame
