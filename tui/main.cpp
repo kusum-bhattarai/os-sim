@@ -72,8 +72,14 @@ static Element render_frame_pool(const SimulatorState& sim) {
         for (int c = 0; c < cols && r * cols + c < cap; ++c) {
             int idx = r * cols + c;
             const Frame& f = pool.peek_frame(idx);
-            std::string label = " " + std::string(idx < 10 ? " " : "")
-                              + std::to_string(idx) + " ";
+            // shared frames show ref count: "3×2" means frame 3, 2 owners
+            std::string label;
+            if (f.in_use && f.ref_count > 1)
+                label = std::string(idx < 10 ? " " : "") + std::to_string(idx)
+                      + "×" + std::to_string(f.ref_count);
+            else
+                label = " " + std::string(idx < 10 ? " " : "") + std::to_string(idx) + " ";
+
             Element cell;
             if (!f.in_use) {
                 cell = text(label) | dim | border;
@@ -465,6 +471,58 @@ int main() {
             | border | size(WIDTH, EQUAL, 42) | size(HEIGHT, EQUAL, 14);
     });
 
+    // ── Fork modal state ─────────────────────────────────────────────────────
+    bool show_fork = false;
+    std::string fork_parent_str;
+    std::string fork_child_str;
+    std::string fork_error;
+
+    auto fork_parent_input = Input(&fork_parent_str, "parent PID");
+    auto fork_child_input  = Input(&fork_child_str,  "child PID");
+
+    auto do_fork_btn = Button("  Fork  ", [&] {
+        int parent = -1, child = -1;
+        try { parent = std::stoi(fork_parent_str); } catch (...) {}
+        try { child  = std::stoi(fork_child_str);  } catch (...) {}
+        if (parent < 0) { fork_error = "Invalid parent PID"; return; }
+        if (child  < 0) { fork_error = "Invalid child PID";  return; }
+        try {
+            sim.fork(parent, child);
+            show_fork  = false;
+            fork_error.clear();
+        } catch (const std::exception& ex) {
+            fork_error = ex.what();
+        }
+    });
+
+    auto fork_cancel = Button(" Cancel ", [&] {
+        show_fork  = false;
+        fork_error.clear();
+    });
+
+    auto fork_body = Container::Vertical({
+        fork_parent_input,
+        fork_child_input,
+        Container::Horizontal({do_fork_btn, fork_cancel}),
+    });
+
+    auto fork_modal = Renderer(fork_body, [&] {
+        std::vector<Element> rows = {
+            text(" Fork Process ") | bold | hcenter,
+            separator(),
+            hbox({text("  Parent PID: "), fork_parent_input->Render() | size(WIDTH, EQUAL, 10)}),
+            hbox({text("  Child PID:  "), fork_child_input->Render()  | size(WIDTH, EQUAL, 10)}),
+            text("  Shares all frames via CoW.") | dim,
+        };
+        if (!fork_error.empty())
+            rows.push_back(text("  " + fork_error) | color(Color::Red));
+        rows.push_back(separator());
+        rows.push_back(
+            hbox({do_fork_btn->Render(), text("  "), fork_cancel->Render()}) | hcenter);
+        return vbox(std::move(rows))
+            | border | size(WIDTH, EQUAL, 38) | size(HEIGHT, EQUAL, 11);
+    });
+
     // ── Main view ────────────────────────────────────────────────────────────
     auto main_view = Renderer([&] {
         return vbox({
@@ -488,11 +546,14 @@ int main() {
         });
     });
 
-    // ── Compose: chain three modals over the main view ───────────────────────
+    // ── Compose: chain modals over the main view ─────────────────────────────
     auto app = Modal(
         Modal(
-            Modal(main_view, config_modal, &show_config),
-            np_modal, &show_new_proc
+            Modal(
+                Modal(main_view, config_modal, &show_config),
+                np_modal, &show_new_proc
+            ),
+            fork_modal, &show_fork
         ),
         access_modal, &show_access
     );
@@ -500,11 +561,12 @@ int main() {
     // ── Global event handling ────────────────────────────────────────────────
     auto with_events = CatchEvent(app, [&](Event e) {
         if (e == Event::Escape) {
-            if (show_access)   { show_access = false; access_error.clear(); last_access.reset(); return true; }
-            if (show_new_proc) { show_new_proc = false; new_proc_error.clear(); return true; }
-            if (show_config)   { show_config   = false; config_error.clear();   return true; }
+            if (show_access)   { show_access   = false; access_error.clear(); last_access.reset(); return true; }
+            if (show_fork)     { show_fork     = false; fork_error.clear();                        return true; }
+            if (show_new_proc) { show_new_proc = false; new_proc_error.clear();                    return true; }
+            if (show_config)   { show_config   = false; config_error.clear();                      return true; }
         }
-        if (show_config || show_new_proc || show_access) return false;
+        if (show_config || show_new_proc || show_fork || show_access) return false;
 
         if (e == Event::Character('q')) { screen.ExitLoopClosure()(); return true; }
         if (e == Event::Character('a')) {
@@ -527,6 +589,20 @@ int main() {
             new_pid_str    = "";
             new_proc_error.clear();
             show_new_proc  = true;
+            return true;
+        }
+        if (e == Event::Character('f')) {
+            fork_parent_str = sim.get_viewed_pid() >= 0
+                                  ? std::to_string(sim.get_viewed_pid()) : "";
+            fork_child_str  = "";
+            fork_error.clear();
+            show_fork       = true;
+            return true;
+        }
+        if (e == Event::Character('r')) {
+            sim.reset(sim.get_policy_type(), sim.get_num_frames());
+            sim.create_process(0);
+            log_scroll = 0;
             return true;
         }
         if (e == Event::Tab) { sim.cycle_viewed_pid(); return true; }
