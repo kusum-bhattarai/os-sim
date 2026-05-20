@@ -63,6 +63,7 @@ endforeach()
 add_executable(os_sim_tui
     tui/main.cpp
     tui/simulator_state.cpp
+    tui/comparison.cpp
 )
 target_link_libraries(os_sim_tui
     PRIVATE
