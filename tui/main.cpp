@@ -675,19 +675,23 @@ int main() {
     std::vector<std::string> preset_names;
     for (const auto& p : presets) preset_names.push_back(p.name);
 
-    auto preset_menu   = Menu(&preset_names, &preset_idx);
-    auto run_btn       = Button("  Run  ", [&] {
+    auto do_run = [&] {
         try {
             const Preset& p = presets[preset_idx];
             sim.reset(p.policy, p.num_frames);
             p.run(sim);
-            log_scroll    = 0;
-            show_presets  = false;
+            log_scroll   = 0;
+            show_presets = false;
             preset_error.clear();
         } catch (const std::exception& ex) {
             preset_error = ex.what();
         }
-    });
+    };
+
+    MenuOption menu_opt;
+    menu_opt.on_enter = do_run; // Enter on a menu item runs it directly
+    auto preset_menu  = Menu(&preset_names, &preset_idx, menu_opt);
+    auto run_btn      = Button("  Run  ", do_run);
     auto presets_cancel = Button(" Cancel ", [&] {
         show_presets = false;
         preset_error.clear();
