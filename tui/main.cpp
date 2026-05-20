@@ -29,6 +29,18 @@ static int parse_address(const std::string& s) {
     return std::stoi(s);
 }
 
+// Returns parsed VPN list, or empty vector on any parse error.
+static std::vector<int> parse_vpn_sequence(const std::string& s) {
+    std::vector<int> vpns;
+    std::istringstream ss(s);
+    std::string token;
+    while (ss >> token) {
+        try { vpns.push_back(std::stoi(token)); }
+        catch (...) { return {}; }
+    }
+    return vpns;
+}
+
 static Element event_tag(const AccessEvent& e) {
     std::string label;
     Color       col;
