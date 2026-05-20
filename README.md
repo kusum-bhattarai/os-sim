@@ -6,6 +6,56 @@ This was a personal project to solidify what I learned in my OS course.
 
 ---
 
+## Interactive TUI
+
+The simulator ships with a full-screen terminal UI built with [FTXUI](https://github.com/ArthurSonzogni/FTXUI). Every panel updates live after each step — frame pool, page table, TLB, access log, and metrics all reflect current simulation state in real time.
+
+### Panels
+
+| Panel | What it shows |
+|-------|---------------|
+| **Frame Pool** | Physical frames — grey=free, green=in use; CLOCK mode overlays a red hand cell and green/yellow reference-bit indicators; CoW-shared frames show `N×R` in yellow |
+| **Page Table** | VPN→frame mapping for the viewed process, with dirty and writable flags |
+| **TLB** | Cached translations for the viewed process; `[Tab]` cycles between processes |
+| **Access Log** | Scrollable event history — `[FALT]` yellow / `[EVCT]` red / `[TLB ]` green / `[PT  ]` cyan / `[CoW ]` magenta |
+| **Metrics** | Live counters: page faults, hits, evictions, TLB hit rate, CoW forks / copies / avoided |
+
+### Controls
+
+| Key | Action |
+|-----|--------|
+| `a` | Single memory access — PID, address (decimal or `0x` hex), R/W mode |
+| `s` | Batch sequence run — type a space-separated VPN list; runs the full sequence against the current policy and shows a fault / TLB-hit / eviction summary |
+| `C` | Algorithm comparison — runs the same sequence through FIFO, LRU, and CLOCK in isolated managers and shows a side-by-side results table; optional frame sweep (1–N frames) highlights Belady's anomaly |
+| `n` | Create a new process |
+| `f` | Fork — parent + child PID; all frames shared via CoW |
+| `p` | Presets — 5 pre-built scenarios: Temporal Locality, Thrashing, CoW Read-Heavy, CoW Write-Heavy, CLOCK Second Chance |
+| `c` | Config — switch algorithm and frame count; takes effect immediately |
+| `r` | Reset — clears state, keeps current config |
+| `Tab` | Cycle viewed PID in page table and TLB panels |
+| `PgUp/Dn` | Scroll access log |
+| `q` | Quit |
+
+### Screenshots
+
+**First page fault** — VPN 0 faults in and loads into frame 0; page table and TLB populate; `[FALT]` logged.
+
+![First page fault](assets/read.png)
+
+**Write access** — TLB hit on a previously loaded page; dirty bit set in the page table.
+
+![Write access with dirty bit](assets/write.png)
+
+**Thrashing** — 4 frames, 8-page working set; every access evicts; 24 faults, 20 evictions, 0% TLB hit rate.
+
+![Thrashing](assets/thrashing.png)
+
+**Copy-on-Write** — after forking, a write to a shared page triggers `[CoW ]`; the frame pool splits the shared frame; one CoW copy recorded in metrics.
+
+![Copy-on-Write](assets/cow.png)
+
+---
+
 ## What it simulates
 
 **Virtual address translation**
@@ -76,6 +126,11 @@ tests/
   test_opt.cpp
   test_cow.cpp             14 tests covering fork, CoW reads, CoW writes,
                            last-owner write restoration, multi-page forks
+
+tui/
+  main.cpp                          FTXUI rendering, all modal components, keybindings
+  simulator_state.h/cpp             thin wrapper around MemoryManager; captures AccessEvents
+  comparison.h/cpp                  isolated policy comparison and frame-sweep logic + renderers
 
 experiments/
   exp_utils.h                       shared table formatting
@@ -151,6 +206,12 @@ Requires CMake 3.15+ and a C++17 compiler.
 ```bash
 cmake -S . -B build
 cmake --build build
+```
+
+## Run the TUI
+
+```bash
+./build/os_sim_tui
 ```
 
 ## Run tests
