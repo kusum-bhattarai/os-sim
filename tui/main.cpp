@@ -317,12 +317,107 @@ static Element render_controls() {
         key("a", "access"),
         key("n", "new proc"),
         key("f", "fork"),
+        key("p", "presets"),
         key("c", "config"),
         key("r", "reset"),
         key("Tab", "next PID"),
         key("PgUp/Dn", "scroll log"),
         key("q", "quit"),
     });
+}
+
+// ── presets ───────────────────────────────────────────────────────────────────
+
+struct Preset {
+    std::string                          name;
+    std::string                          description;
+    PolicyType                           policy;
+    int                                  num_frames;
+    std::function<void(SimulatorState&)> run;
+};
+
+static const std::vector<Preset>& get_presets() {
+    static const std::vector<Preset> list = {
+        {
+            "Temporal Locality",
+            "4 frames, 4 pages: one cold-start round then all hits. "
+            "Shows the payoff of temporal locality — the working set "
+            "fits in memory so every repeat access is free.",
+            PolicyType::LRU, 4,
+            [](SimulatorState& s) {
+                s.create_process(0);
+                for (int round = 0; round < 6; ++round)
+                    for (int vpn = 0; vpn < 4; ++vpn)
+                        s.step(0, vpn * PAGE_SIZE, false);
+            }
+        },
+        {
+            "Thrashing",
+            "4 frames, 8 pages: the working set is twice the frame count. "
+            "Every access evicts a page that will be needed again shortly — "
+            "100% fault rate, zero hits.",
+            PolicyType::LRU, 4,
+            [](SimulatorState& s) {
+                s.create_process(0);
+                for (int round = 0; round < 3; ++round)
+                    for (int vpn = 0; vpn < 8; ++vpn)
+                        s.step(0, vpn * PAGE_SIZE, false);
+            }
+        },
+        {
+            "CoW: Read-Heavy Fork",
+            "PID 0 loads 4 pages then forks to PID 1. Both processes "
+            "read all shared pages repeatedly. Zero copies made — the "
+            "fork overhead is deferred and never materialises.",
+            PolicyType::LRU, 8,
+            [](SimulatorState& s) {
+                s.create_process(0);
+                for (int vpn = 0; vpn < 4; ++vpn)
+                    s.step(0, vpn * PAGE_SIZE, false);
+                s.fork(0, 1);
+                for (int round = 0; round < 4; ++round)
+                    for (int vpn = 0; vpn < 4; ++vpn) {
+                        s.step(0, vpn * PAGE_SIZE, false);
+                        s.step(1, vpn * PAGE_SIZE, false);
+                    }
+            }
+        },
+        {
+            "CoW: Write-Heavy Fork",
+            "PID 0 loads 4 pages then forks to PID 1. Both processes "
+            "immediately write to every shared page. Each write triggers "
+            "a private copy — fork was expensive.",
+            PolicyType::LRU, 8,
+            [](SimulatorState& s) {
+                s.create_process(0);
+                for (int vpn = 0; vpn < 4; ++vpn)
+                    s.step(0, vpn * PAGE_SIZE, false);
+                s.fork(0, 1);
+                for (int vpn = 0; vpn < 4; ++vpn) {
+                    s.step(0, vpn * PAGE_SIZE, true);
+                    s.step(1, vpn * PAGE_SIZE, true);
+                }
+            }
+        },
+        {
+            "CLOCK: Second Chance",
+            "8 frames, 14 pages. Fills all frames, then re-accesses "
+            "even-numbered pages (setting ref bits). New pages trigger "
+            "eviction: unreferenced frames go first; referenced ones "
+            "survive one sweep before eviction.",
+            PolicyType::CLOCK, 8,
+            [](SimulatorState& s) {
+                s.create_process(0);
+                for (int vpn = 0; vpn < 8; ++vpn)
+                    s.step(0, vpn * PAGE_SIZE, false);
+                for (int vpn : {0, 2, 4, 6})
+                    s.step(0, vpn * PAGE_SIZE, false);
+                for (int vpn = 8; vpn < 14; ++vpn)
+                    s.step(0, vpn * PAGE_SIZE, false);
+            }
+        },
+    };
+    return list;
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
@@ -571,6 +666,57 @@ int main() {
             | border | size(WIDTH, EQUAL, 38) | size(HEIGHT, EQUAL, 11);
     });
 
+    // ── Presets modal state ──────────────────────────────────────────────────
+    bool show_presets   = false;
+    int  preset_idx     = 0;
+    std::string preset_error;
+
+    const auto& presets = get_presets();
+    std::vector<std::string> preset_names;
+    for (const auto& p : presets) preset_names.push_back(p.name);
+
+    auto preset_menu   = Menu(&preset_names, &preset_idx);
+    auto run_btn       = Button("  Run  ", [&] {
+        try {
+            const Preset& p = presets[preset_idx];
+            sim.reset(p.policy, p.num_frames);
+            p.run(sim);
+            log_scroll    = 0;
+            show_presets  = false;
+            preset_error.clear();
+        } catch (const std::exception& ex) {
+            preset_error = ex.what();
+        }
+    });
+    auto presets_cancel = Button(" Cancel ", [&] {
+        show_presets = false;
+        preset_error.clear();
+    });
+
+    auto presets_body = Container::Vertical({
+        preset_menu,
+        Container::Horizontal({run_btn, presets_cancel}),
+    });
+
+    auto presets_modal = Renderer(presets_body, [&] {
+        std::vector<Element> rows = {
+            text(" Presets ") | bold | hcenter,
+            separator(),
+            preset_menu->Render()
+                | size(HEIGHT, EQUAL, static_cast<int>(presets.size())),
+            separator(),
+            paragraph(presets[preset_idx].description)
+                | size(HEIGHT, LESS_THAN, 5) | dim,
+        };
+        if (!preset_error.empty())
+            rows.push_back(text("  " + preset_error) | color(Color::Red));
+        rows.push_back(separator());
+        rows.push_back(
+            hbox({run_btn->Render(), text("  "), presets_cancel->Render()}) | hcenter);
+        return vbox(std::move(rows))
+            | border | size(WIDTH, EQUAL, 50) | size(HEIGHT, EQUAL, 17);
+    });
+
     // ── Main view ────────────────────────────────────────────────────────────
     auto main_view = Renderer([&] {
         return vbox({
@@ -598,10 +744,13 @@ int main() {
     auto app = Modal(
         Modal(
             Modal(
-                Modal(main_view, config_modal, &show_config),
-                np_modal, &show_new_proc
+                Modal(
+                    Modal(main_view, config_modal, &show_config),
+                    np_modal, &show_new_proc
+                ),
+                fork_modal, &show_fork
             ),
-            fork_modal, &show_fork
+            presets_modal, &show_presets
         ),
         access_modal, &show_access
     );
@@ -610,11 +759,12 @@ int main() {
     auto with_events = CatchEvent(app, [&](Event e) {
         if (e == Event::Escape) {
             if (show_access)   { show_access   = false; access_error.clear(); last_access.reset(); return true; }
+            if (show_presets)  { show_presets  = false; preset_error.clear();                      return true; }
             if (show_fork)     { show_fork     = false; fork_error.clear();                        return true; }
             if (show_new_proc) { show_new_proc = false; new_proc_error.clear();                    return true; }
             if (show_config)   { show_config   = false; config_error.clear();                      return true; }
         }
-        if (show_config || show_new_proc || show_fork || show_access) return false;
+        if (show_config || show_new_proc || show_fork || show_presets || show_access) return false;
 
         if (e == Event::Character('q')) { screen.ExitLoopClosure()(); return true; }
         if (e == Event::Character('a')) {
@@ -637,6 +787,12 @@ int main() {
             new_pid_str    = "";
             new_proc_error.clear();
             show_new_proc  = true;
+            return true;
+        }
+        if (e == Event::Character('p')) {
+            preset_idx   = 0;
+            preset_error.clear();
+            show_presets = true;
             return true;
         }
         if (e == Event::Character('f')) {
