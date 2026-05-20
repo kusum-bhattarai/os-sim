@@ -10,6 +10,7 @@
 #include <ftxui/dom/elements.hpp>
 
 #include "simulator_state.h"
+#include "policy/clock.h"
 
 using namespace ftxui;
 
@@ -62,9 +63,29 @@ static Element render_header(const SimulatorState& sim) {
 }
 
 static Element render_frame_pool(const SimulatorState& sim) {
-    const auto& pool = sim.get_manager().get_frame_pool();
-    const int cap  = pool.get_capacity();
-    const int cols = 8;
+    const auto& pool  = sim.get_manager().get_frame_pool();
+    const int   cap   = pool.get_capacity();
+    const int   cols  = 8;
+    const Clock* clock = sim.get_clock_policy();
+
+    // Build CLOCK state lookup: physical frame index → (ref bit, is hand)
+    std::unordered_map<int, bool> clock_refs;
+    int clock_hand_frame = -1;
+    if (clock) {
+        const auto& entries = clock->get_entries();
+        for (const auto& e : entries) clock_refs[e.frame_index] = e.referenced;
+        if (!entries.empty())
+            clock_hand_frame = entries[clock->get_hand()].frame_index;
+    }
+
+    // helper: 4-display-char label for a CLOCK cell (">N ○" / " NN●" etc.)
+    auto clock_label = [](bool is_hand, int idx, bool ref) -> std::string {
+        std::string p   = is_hand ? ">" : " ";
+        std::string bit = ref     ? "●" : "○";
+        return idx < 10
+            ? p + std::to_string(idx) + " " + bit
+            : p + std::to_string(idx)       + bit;
+    };
 
     std::vector<Element> rows;
     for (int r = 0; r * cols < cap; ++r) {
@@ -72,21 +93,38 @@ static Element render_frame_pool(const SimulatorState& sim) {
         for (int c = 0; c < cols && r * cols + c < cap; ++c) {
             int idx = r * cols + c;
             const Frame& f = pool.peek_frame(idx);
-            // shared frames show ref count: "3×2" means frame 3, 2 owners
-            std::string label;
-            if (f.in_use && f.ref_count > 1)
-                label = std::string(idx < 10 ? " " : "") + std::to_string(idx)
-                      + "×" + std::to_string(f.ref_count);
-            else
-                label = " " + std::string(idx < 10 ? " " : "") + std::to_string(idx) + " ";
-
             Element cell;
+
             if (!f.in_use) {
+                std::string label = " " + std::string(idx < 10 ? " " : "")
+                                  + std::to_string(idx) + " ";
                 cell = text(label) | dim | border;
-            } else if (f.ref_count > 1) {
-                cell = text(label) | bold | color(Color::Yellow) | border;
+
+            } else if (clock && clock_refs.count(idx)) {
+                bool is_hand = (idx == clock_hand_frame);
+                bool ref     = clock_refs.at(idx);
+                std::string label = clock_label(is_hand, idx, ref);
+                if (is_hand)
+                    cell = text(label) | bold | color(Color::White)
+                         | bgcolor(Color::Red) | border;
+                else if (ref)
+                    cell = text(label) | bold | color(Color::Green) | border;
+                else
+                    cell = text(label) | bold | color(Color::Yellow) | border;
+
             } else {
-                cell = text(label) | bold | color(Color::Green) | border;
+                // FIFO / LRU — show ref count for CoW-shared frames
+                std::string label;
+                if (f.ref_count > 1)
+                    label = std::string(idx < 10 ? " " : "") + std::to_string(idx)
+                          + "×" + std::to_string(f.ref_count);
+                else
+                    label = " " + std::string(idx < 10 ? " " : "")
+                          + std::to_string(idx) + " ";
+
+                cell = (f.ref_count > 1)
+                    ? text(label) | bold | color(Color::Yellow) | border
+                    : text(label) | bold | color(Color::Green)  | border;
             }
             cells.push_back(std::move(cell));
         }
@@ -94,12 +132,22 @@ static Element render_frame_pool(const SimulatorState& sim) {
     }
 
     rows.push_back(separator());
-    rows.push_back(hbox({
-        text("  "),
-        text("□") | dim,       text(" free  ") | dim,
-        text("■") | color(Color::Green),  text(" used  ") | dim,
-        text("◉") | color(Color::Yellow), text(" shared (CoW)") | dim,
-    }));
+    if (clock) {
+        rows.push_back(hbox({
+            text("  "),
+            text(">") | bold | color(Color::White) | bgcolor(Color::Red),
+            text(" hand  ") | dim,
+            text("●") | color(Color::Green),  text(" ref=1  ") | dim,
+            text("○") | color(Color::Yellow), text(" ref=0 (candidate)") | dim,
+        }));
+    } else {
+        rows.push_back(hbox({
+            text("  "),
+            text("□") | dim,        text(" free  ") | dim,
+            text("■") | color(Color::Green),  text(" used  ") | dim,
+            text("◉") | color(Color::Yellow), text(" shared (CoW)") | dim,
+        }));
+    }
 
     return window(text(" Frame Pool "), vbox(std::move(rows)));
 }

@@ -17,7 +17,9 @@ std::unique_ptr<ReplacementPolicy> SimulatorState::make_policy(PolicyType type) 
 SimulatorState::SimulatorState(PolicyType policy_type, int num_frames)
     : policy_type(policy_type), num_frames(num_frames)
 {
-    manager = std::make_unique<MemoryManager>(make_policy(policy_type).release(), num_frames);
+    auto policy  = make_policy(policy_type);
+    clock_policy = dynamic_cast<Clock*>(policy.get());
+    manager      = std::make_unique<MemoryManager>(policy.release(), num_frames);
 }
 
 std::string SimulatorState::get_policy_name() const {
@@ -60,11 +62,13 @@ void SimulatorState::fork(int parent_pid, int child_pid) {
 }
 
 void SimulatorState::reset(PolicyType new_policy_type, int new_num_frames) {
-    policy_type = new_policy_type;
-    num_frames  = new_num_frames;
-    manager     = std::make_unique<MemoryManager>(make_policy(policy_type).release(), num_frames);
+    policy_type  = new_policy_type;
+    num_frames   = new_num_frames;
+    auto policy  = make_policy(policy_type);
+    clock_policy = dynamic_cast<Clock*>(policy.get());
+    manager      = std::make_unique<MemoryManager>(policy.release(), num_frames);
     log.clear();
-    viewed_pid  = -1;
+    viewed_pid   = -1;
 }
 
 void SimulatorState::cycle_viewed_pid() {
