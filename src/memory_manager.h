@@ -20,11 +20,18 @@ public:
     MemoryManager(ReplacementPolicy* policy, int num_frames = NUM_FRAMES, size_t tlb_size = TLB_SIZE)
         : policy(policy), frame_pool(num_frames), tlb_size(tlb_size) {}
 
-    void create_process(int pid);   // creates a new process with an empty page table
-    void access(int pid, int virtual_address, bool is_write);  // simulates a memory access, updates metrics, and handles page faults
-    void print_metrics() const {metrics.print();}
-    const Metrics& get_metrics() const { return metrics;}
-    void reset_metrics() { metrics.reset(); }
-    void fork_process(int parent_pid, int child_pid); // creates a new process with a copy of the parent's page table (for CoW implementation)
+    void create_process(int pid);
+    void access(int pid, int virtual_address, bool is_write);
+    void fork_process(int parent_pid, int child_pid);
     void handle_cow(int pid, int vpn, PageTableEntry* entry);
+
+    void print_metrics() const { metrics.print(); }
+    void reset_metrics() { metrics.reset(); }
+    const Metrics& get_metrics() const { return metrics; }
+
+    // read-only introspection for visualization
+    const FramePool& get_frame_pool() const { return frame_pool; }
+    const Process&   get_process(int pid) const;
+    std::vector<int> get_pids() const;
+    std::vector<std::pair<int,int>> get_frame_owners(int frame_index) const;
 };

@@ -35,4 +35,8 @@ public:
 
     // decrement ref count / free if reaches 0
     void decrement_ref(int frame_index);
+
+    // read any frame's state without the in_use guard (for visualization)
+    const Frame& peek_frame(int frame_index) const;
+    int get_capacity() const { return capacity; }
 };

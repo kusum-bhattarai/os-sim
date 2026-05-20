@@ -26,4 +26,6 @@ public:
 
     // wipes all entries (e.g., context switch without ASID)
     void flush();
+
+    const std::vector<TLBEntry>& get_entries() const { return entries; }
 };

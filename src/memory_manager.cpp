@@ -1,5 +1,30 @@
 #include "memory_manager.h"
+#include <algorithm>
 #include <stdexcept>
+
+const Process& MemoryManager::get_process(int pid) const {
+    auto it = processes.find(pid);
+    if (it == processes.end()) {
+        throw std::runtime_error("Process does not exist");
+    }
+    return *it->second;
+}
+
+std::vector<int> MemoryManager::get_pids() const {
+    std::vector<int> pids;
+    pids.reserve(processes.size());
+    for (const auto& [pid, _] : processes) {
+        pids.push_back(pid);
+    }
+    std::sort(pids.begin(), pids.end());
+    return pids;
+}
+
+std::vector<std::pair<int,int>> MemoryManager::get_frame_owners(int frame_index) const {
+    auto it = frame_to_owners.find(frame_index);
+    if (it == frame_to_owners.end()) return {};
+    return it->second;
+}
 
 void MemoryManager::create_process(int pid){
     if (processes.count(pid) > 0){
@@ -123,6 +148,7 @@ void MemoryManager::handle_cow(int pid, int vpn, PageTableEntry* entry){
     }
     int old_frame = entry->frame_index;
     int new_frame = frame_pool.allocate();
+    policy->on_load(new_frame, vpn); // register new frame with replacement policy
     // simulate copying data by just updating ownership and ref counts
     frame_pool.decrement_ref(old_frame); // decrement ref for old frame
     entry->frame_index = new_frame; // point to new frame

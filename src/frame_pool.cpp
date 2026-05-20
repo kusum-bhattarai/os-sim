@@ -51,6 +51,13 @@ void FramePool::increment_ref(int frame_index){
     frames[frame_index].ref_count++;
 }
 
+const Frame& FramePool::peek_frame(int frame_index) const {
+    if (frame_index < 0 || static_cast<size_t>(frame_index) >= static_cast<size_t>(capacity)) {
+        throw std::out_of_range("Invalid frame index");
+    }
+    return frames[frame_index];
+}
+
 void FramePool::decrement_ref(int frame_index){
     if (frame_index < 0 || static_cast<size_t>(frame_index) >= capacity){
         throw std::out_of_range("Invalid frame index");
