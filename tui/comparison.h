@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include "simulator_state.h"
+#include <ftxui/dom/elements.hpp>
 
 struct PolicyResult {
     std::string policy_name;
@@ -22,3 +23,11 @@ std::vector<PolicyResult> run_comparison(
 std::vector<PolicyResult> run_frame_sweep(
     const std::vector<int>& vpns, int pid, bool is_write,
     int frames_min, int frames_max);
+
+// Render a side-by-side table of results from run_comparison().
+ftxui::Element render_comparison_table(const std::vector<PolicyResult>& results);
+
+// Render a frame-sweep table; marks Belady's anomaly (FIFO faults increase
+// despite more frames) with a ▲ indicator.
+ftxui::Element render_sweep_table(const std::vector<PolicyResult>& results,
+                                   int frames_min, int frames_max);
