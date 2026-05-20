@@ -327,6 +327,7 @@ static Element render_controls() {
     return hbox({
         text("  "),
         key("a", "access"),
+        key("s", "sequence"),
         key("n", "new proc"),
         key("f", "fork"),
         key("p", "presets"),
@@ -733,6 +734,88 @@ int main() {
             | border | size(WIDTH, EQUAL, 50) | size(HEIGHT, EQUAL, 17);
     });
 
+    // ── Sequence modal state ─────────────────────────────────────────────────
+    bool show_seq = false;
+    std::string seq_pid_str;
+    std::string seq_input_str;
+    int seq_mode = 0; // 0=Read, 1=Write
+    std::string seq_result;
+    std::string seq_error;
+
+    auto do_seq_run = [&] {
+        int pid = -1;
+        try { pid = std::stoi(seq_pid_str); } catch (...) {}
+        if (pid < 0) { seq_error = "Invalid PID"; seq_result.clear(); return; }
+
+        auto vpns = parse_vpn_sequence(seq_input_str);
+        if (vpns.empty()) { seq_error = "No valid VPNs in sequence"; seq_result.clear(); return; }
+
+        bool is_write = (seq_mode == 1);
+        int faults = 0, tlb_hits = 0, evictions = 0;
+        try {
+            for (int vpn : vpns) {
+                auto evt = sim.step(pid, vpn * PAGE_SIZE, is_write);
+                log_scroll = 0;
+                if (evt.page_fault) ++faults;
+                if (evt.tlb_hit)    ++tlb_hits;
+                if (evt.eviction)   ++evictions;
+            }
+            seq_error.clear();
+            seq_result = std::to_string(vpns.size()) + " accesses — "
+                       + std::to_string(faults)    + " faults, "
+                       + std::to_string(tlb_hits)  + " TLB hits, "
+                       + std::to_string(evictions) + " evictions";
+        } catch (const std::exception& ex) {
+            seq_error = ex.what();
+            seq_result.clear();
+        }
+    };
+
+    auto seq_pid_input  = Input(&seq_pid_str, "PID");
+
+    InputOption seq_opt;
+    seq_opt.multiline = false;
+    seq_opt.on_enter  = [&] { do_seq_run(); };
+    auto seq_seq_input  = Input(&seq_input_str, "e.g. 0 1 2 3 0 1 4", seq_opt);
+
+    std::vector<std::string> seq_mode_labels = {"Read", "Write"};
+    auto seq_mode_radio = Radiobox(&seq_mode_labels, &seq_mode);
+
+    auto seq_run_btn = Button("  Run  ", [&] { do_seq_run(); });
+    auto seq_cancel  = Button(" Close ", [&] {
+        show_seq = false;
+        seq_error.clear();
+        seq_result.clear();
+    });
+
+    auto seq_body = Container::Vertical({
+        seq_pid_input,
+        seq_seq_input,
+        seq_mode_radio,
+        Container::Horizontal({seq_run_btn, seq_cancel}),
+    });
+
+    auto seq_modal = Renderer(seq_body, [&] {
+        std::vector<Element> rows = {
+            text(" Sequence Run ") | bold | hcenter,
+            separator(),
+            hbox({text("  PID:      "), seq_pid_input->Render()  | size(WIDTH, EQUAL, 10)}),
+            hbox({text("  Sequence: "), seq_seq_input->Render()  | flex}),
+            hbox({text("  Mode:     "), seq_mode_radio->Render()}),
+            separator(),
+        };
+        if (!seq_result.empty())
+            rows.push_back(text("  " + seq_result) | color(Color::Green));
+        if (!seq_error.empty())
+            rows.push_back(text("  " + seq_error) | color(Color::Red));
+        rows.push_back(separator());
+        rows.push_back(
+            hbox({seq_run_btn->Render(), text("  "), seq_cancel->Render()}) | hcenter);
+        rows.push_back(text("  Enter on sequence field also runs") | dim);
+        return vbox(std::move(rows))
+            | border | size(WIDTH, EQUAL, 54) | size(HEIGHT, EQUAL, 14);
+    });
+
     // ── Main view ────────────────────────────────────────────────────────────
     auto main_view = Renderer([&] {
         return vbox({
@@ -761,12 +844,15 @@ int main() {
         Modal(
             Modal(
                 Modal(
-                    Modal(main_view, config_modal, &show_config),
-                    np_modal, &show_new_proc
+                    Modal(
+                        Modal(main_view, config_modal, &show_config),
+                        np_modal, &show_new_proc
+                    ),
+                    fork_modal, &show_fork
                 ),
-                fork_modal, &show_fork
+                presets_modal, &show_presets
             ),
-            presets_modal, &show_presets
+            seq_modal, &show_seq
         ),
         access_modal, &show_access
     );
@@ -775,12 +861,13 @@ int main() {
     auto with_events = CatchEvent(app, [&](Event e) {
         if (e == Event::Escape) {
             if (show_access)   { show_access   = false; access_error.clear(); last_access.reset(); return true; }
+            if (show_seq)      { show_seq      = false; seq_error.clear();    seq_result.clear();  return true; }
             if (show_presets)  { show_presets  = false; preset_error.clear();                      return true; }
             if (show_fork)     { show_fork     = false; fork_error.clear();                        return true; }
             if (show_new_proc) { show_new_proc = false; new_proc_error.clear();                    return true; }
             if (show_config)   { show_config   = false; config_error.clear();                      return true; }
         }
-        if (show_config || show_new_proc || show_fork || show_presets || show_access) return false;
+        if (show_config || show_new_proc || show_fork || show_presets || show_seq || show_access) return false;
 
         if (e == Event::Character('q')) { screen.ExitLoopClosure()(); return true; }
         if (e == Event::Character('a')) {
@@ -817,6 +904,14 @@ int main() {
             fork_child_str  = "";
             fork_error.clear();
             show_fork       = true;
+            return true;
+        }
+        if (e == Event::Character('s')) {
+            seq_pid_str = sim.get_viewed_pid() >= 0
+                              ? std::to_string(sim.get_viewed_pid()) : "0";
+            seq_error.clear();
+            seq_result.clear();
+            show_seq    = true;
             return true;
         }
         if (e == Event::Character('r')) {
