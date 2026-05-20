@@ -10,6 +10,7 @@
 #include <ftxui/dom/elements.hpp>
 
 #include "simulator_state.h"
+#include "comparison.h"
 #include "policy/clock.h"
 
 using namespace ftxui;
@@ -816,6 +817,98 @@ int main() {
             | border | size(WIDTH, EQUAL, 54) | size(HEIGHT, EQUAL, 14);
     });
 
+    // ── Compare modal state ──────────────────────────────────────────────────
+    bool show_compare = false;
+    std::string cmp_seq_str;
+    std::string cmp_frames_str = std::to_string(sim.get_num_frames());
+    bool cmp_sweep = false;
+    std::string cmp_error;
+    // Holds rendered results; rebuilt on each Run press.
+    std::vector<PolicyResult> cmp_results;
+    bool cmp_ran = false;
+
+    auto do_compare_run = [&] {
+        auto vpns = parse_vpn_sequence(cmp_seq_str);
+        if (vpns.empty()) { cmp_error = "No valid VPNs in sequence"; cmp_results.clear(); cmp_ran = false; return; }
+
+        int pid = sim.get_viewed_pid() >= 0 ? sim.get_viewed_pid() : 0;
+
+        int frames = 0;
+        try { frames = std::stoi(cmp_frames_str); } catch (...) {}
+        if (frames < 1 || frames > 256) { cmp_error = "Frames must be 1-256"; cmp_results.clear(); cmp_ran = false; return; }
+
+        try {
+            if (cmp_sweep) {
+                int sweep_max = std::min(frames, 8);
+                cmp_results = run_frame_sweep(vpns, pid, false, 1, sweep_max);
+            } else {
+                cmp_results = run_comparison(vpns, pid, false, frames);
+            }
+            cmp_error.clear();
+            cmp_ran = true;
+        } catch (const std::exception& ex) {
+            cmp_error = ex.what();
+            cmp_results.clear();
+            cmp_ran = false;
+        }
+    };
+
+    InputOption cmp_seq_opt;
+    cmp_seq_opt.multiline = false;
+    cmp_seq_opt.on_enter  = [&] { do_compare_run(); };
+    auto cmp_seq_input    = Input(&cmp_seq_str, "e.g. 0 1 2 3 0 1 4", cmp_seq_opt);
+    auto cmp_frames_input = Input(&cmp_frames_str, "count");
+
+    auto cmp_sweep_cb = Checkbox("Frame sweep (1–N frames, shows Belady's anomaly)", &cmp_sweep);
+
+    auto cmp_run_btn  = Button("  Run  ", [&] { do_compare_run(); });
+    auto cmp_cancel   = Button(" Close ", [&] {
+        show_compare = false;
+        cmp_error.clear();
+        cmp_results.clear();
+        cmp_ran = false;
+    });
+
+    auto cmp_body = Container::Vertical({
+        cmp_seq_input,
+        cmp_frames_input,
+        cmp_sweep_cb,
+        Container::Horizontal({cmp_run_btn, cmp_cancel}),
+    });
+
+    auto cmp_modal = Renderer(cmp_body, [&] {
+        std::vector<Element> rows = {
+            text(" Algorithm Comparison ") | bold | hcenter,
+            separator(),
+            hbox({text("  Sequence: "), cmp_seq_input->Render()    | flex}),
+            hbox({text("  Frames:   "), cmp_frames_input->Render() | size(WIDTH, EQUAL, 8)}),
+            hbox({text("  "),           cmp_sweep_cb->Render()}),
+            separator(),
+        };
+
+        if (cmp_ran && !cmp_results.empty()) {
+            if (cmp_sweep) {
+                int frames = 0;
+                try { frames = std::stoi(cmp_frames_str); } catch (...) { frames = 8; }
+                int sweep_max = std::min(frames, 8);
+                rows.push_back(render_sweep_table(cmp_results, 1, sweep_max));
+            } else {
+                rows.push_back(render_comparison_table(cmp_results));
+            }
+            rows.push_back(separator());
+        }
+
+        if (!cmp_error.empty())
+            rows.push_back(text("  " + cmp_error) | color(Color::Red));
+
+        rows.push_back(
+            hbox({cmp_run_btn->Render(), text("  "), cmp_cancel->Render()}) | hcenter);
+        rows.push_back(text("  Sequence pre-filled from [s] if run first  |  Enter on sequence runs") | dim);
+
+        return vbox(std::move(rows))
+            | border | size(WIDTH, EQUAL, 58);
+    });
+
     // ── Main view ────────────────────────────────────────────────────────────
     auto main_view = Renderer([&] {
         return vbox({
@@ -854,6 +947,8 @@ int main() {
             ),
             seq_modal, &show_seq
         ),
+        cmp_modal, &show_compare
+    ),
         access_modal, &show_access
     );
 
