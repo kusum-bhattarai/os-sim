@@ -38,7 +38,7 @@ void MemoryManager::access(int pid, int virtual_address, bool is_write){
         throw std::runtime_error("Process does not exist");
     }
     Process& proc = *processes[pid];
-    PageTable& pt = proc.get_page_table();
+    IPageTable& pt = proc.get_page_table();
     int vpn = virtual_address / PAGE_SIZE;
 
     // TLB lookup first
@@ -124,8 +124,8 @@ void MemoryManager::fork_process(int parent_pid, int child_pid){
     } else {
         Process& parent = *processes[parent_pid];
         auto child = std::make_unique<Process>(child_pid);
-        PageTable& parent_pt = parent.get_page_table();
-        PageTable& child_pt = child->get_page_table();
+        IPageTable& parent_pt = parent.get_page_table();
+        IPageTable& child_pt = child->get_page_table();
 
         // copy page table entries and increment frame ref counts
         for (const auto& [vpn, entry] : parent_pt.get_entries()){

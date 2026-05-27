@@ -1,7 +1,7 @@
 #pragma once
 #include <unordered_map>
 #include <memory>
-#include "page_table.h"
+#include "page_table_iface.h"
 #include "frame_pool.h"
 #include "metrics.h"
 #include "policy/replacement_policy.h"
