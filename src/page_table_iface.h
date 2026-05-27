@@ -10,6 +10,8 @@ struct PageTableEntry {
     PageTableEntry() : valid(false), dirty(false), referenced(false), writable(false), frame_index(-1) {}
 };
 
+enum class PageTableType { FLAT, TWO_LEVEL };
+
 class IPageTable {
 public:
     virtual ~IPageTable() = default;

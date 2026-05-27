@@ -25,6 +25,12 @@ public:
     int translate(int virtual_address) override;
     std::unordered_map<int, PageTableEntry> get_entries() const override;
 
+    int l2_table_count() const {
+        int count = 0;
+        for (const auto& slot : l1) if (slot != nullptr) count++;
+        return count;
+    }
+
 private:
     static int l1_index(int vpn) { return vpn >> L2_BITS; }
     static int l2_index(int vpn) { return vpn & (L2_SIZE - 1); }

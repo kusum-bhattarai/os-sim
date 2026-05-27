@@ -20,7 +20,7 @@ public:
     MemoryManager(ReplacementPolicy* policy, int num_frames = NUM_FRAMES, size_t tlb_size = TLB_SIZE)
         : policy(policy), frame_pool(num_frames), tlb_size(tlb_size) {}
 
-    void create_process(int pid);
+    void create_process(int pid, PageTableType pt_type = PageTableType::FLAT);
     void access(int pid, int virtual_address, bool is_write);
     void fork_process(int parent_pid, int child_pid);
     void handle_cow(int pid, int vpn, PageTableEntry* entry);
