@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_library(sim_core STATIC
     src/frame_pool.cpp
     src/page_table.cpp
+    src/page_table_two_level.cpp
     src/tlb.cpp
     src/policy/clock.cpp
     src/policy/fifo.cpp
