@@ -31,6 +31,20 @@ public:
         return count;
     }
 
+    bool l1_allocated(int i1) const { return l1[i1] != nullptr; }
+
+    int l2_present_count(int i1) const {
+        if (l1[i1] == nullptr) return 0;
+        int n = 0;
+        for (bool p : l1[i1]->present) if (p) n++;
+        return n;
+    }
+
+    const PageTableEntry* l2_entry_at(int i1, int i2) const {
+        if (l1[i1] == nullptr || !l1[i1]->present[i2]) return nullptr;
+        return &l1[i1]->entries[i2];
+    }
+
 private:
     static int l1_index(int vpn) { return vpn >> L2_BITS; }
     static int l2_index(int vpn) { return vpn & (L2_SIZE - 1); }

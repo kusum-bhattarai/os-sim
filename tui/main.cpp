@@ -12,6 +12,7 @@
 #include "simulator_state.h"
 #include "comparison.h"
 #include "policy/clock.h"
+#include "page_table_two_level.h"
 
 using namespace ftxui;
 
@@ -318,6 +319,65 @@ static Element render_metrics(const SimulatorState& sim) {
     );
 }
 
+static Element render_l1_grid(const TwoLevelPageTable& tl, int selected) {
+    std::vector<Element> rows;
+    for (int row = 0; row < 4; row++) {
+        std::vector<Element> cells;
+        for (int col = 0; col < 8; col++) {
+            int i1 = row * 8 + col;
+            bool alloc = tl.l1_allocated(i1);
+            bool sel = (i1 == selected);
+
+            Element cell;
+            if (!alloc) {
+                cell = text(" -- ") | dim;
+            } else {
+                int n = tl.l2_present_count(i1);
+                std::string label = n < 10
+                    ? "  " + std::to_string(n) + " "
+                    : " "  + std::to_string(n) + " ";
+                cell = text(label) | color(Color::Green) | bold;
+            }
+            if (sel) cell = cell | inverted;
+            cells.push_back(cell | border);
+        }
+        rows.push_back(hbox(std::move(cells)));
+    }
+    return vbox(std::move(rows));
+}
+
+static Element render_l2_entries(const TwoLevelPageTable& tl, int i1) {
+    int vpn_base = i1 << L2_BITS;
+    auto hdr = hbox({
+        text("  VPN  ") | bold,
+        text(" Frame ") | bold,
+        text(" Dirty ") | bold,
+        text(" Write ") | bold,
+    }) | bgcolor(Color::GrayDark);
+
+    std::vector<Element> rows = { hdr };
+    bool any = false;
+    for (int i2 = 0; i2 < L2_SIZE; i2++) {
+        const PageTableEntry* e = tl.l2_entry_at(i1, i2);
+        if (!e || !e->valid) continue;
+        any = true;
+        int vpn = vpn_base + i2;
+        rows.push_back(hbox({
+            text("  " + std::to_string(vpn))
+                | color(Color::Cyan) | size(WIDTH, EQUAL, 7),
+            text(std::to_string(e->frame_index))
+                | size(WIDTH, EQUAL, 7),
+            text(e->dirty    ? "  *  " : "  -  ")
+                | color(e->dirty ? Color::Red : Color::GrayLight),
+            text(e->writable ? "  rw " : "  r  ")
+                | color(e->writable ? Color::Green : Color::Yellow),
+        }));
+    }
+    if (!any)
+        rows.push_back(text("  (no valid pages in this slot)") | dim);
+    return vbox(std::move(rows));
+}
+
 static Element render_controls() {
     auto key = [](const std::string& k, const std::string& desc) {
         return hbox({
@@ -329,6 +389,7 @@ static Element render_controls() {
         text("  "),
         key("a", "access"),
         key("s", "sequence"),
+        key("t", "2L table"),
         key("C", "compare"),
         key("n", "new proc"),
         key("f", "fork"),
@@ -497,15 +558,20 @@ int main() {
     bool show_new_proc = false;
     std::string new_pid_str;
     std::string new_proc_error;
+    int new_proc_pt_type = 0; // 0 = FLAT, 1 = TWO_LEVEL
 
-    auto pid_input  = Input(&new_pid_str, "e.g. 1");
+    auto pid_input = Input(&new_pid_str, "e.g. 1");
+
+    std::vector<std::string> np_pt_labels = {"Flat", "Two-Level"};
+    auto np_pt_radio = Radiobox(&np_pt_labels, &new_proc_pt_type);
 
     auto create_btn = Button("  Create  ", [&] {
         int pid = -1;
         try { pid = std::stoi(new_pid_str); } catch (...) {}
         if (pid < 0) { new_proc_error = "PID must be >= 0"; return; }
+        auto pt = (new_proc_pt_type == 1) ? PageTableType::TWO_LEVEL : PageTableType::FLAT;
         try {
-            sim.create_process(pid);
+            sim.create_process(pid, pt);
             show_new_proc = false;
             new_proc_error.clear();
         } catch (const std::exception& ex) {
@@ -520,6 +586,7 @@ int main() {
 
     auto np_body = Container::Vertical({
         pid_input,
+        np_pt_radio,
         Container::Horizontal({create_btn, np_cancel}),
     });
 
@@ -527,7 +594,8 @@ int main() {
         std::vector<Element> rows = {
             text(" New Process ") | bold | hcenter,
             separator(),
-            hbox({text("  PID: "), pid_input->Render() | size(WIDTH, EQUAL, 10)}),
+            hbox({text("  PID:        "), pid_input->Render() | size(WIDTH, EQUAL, 10)}),
+            hbox({text("  Page Table: "), np_pt_radio->Render()}),
         };
         if (!new_proc_error.empty())
             rows.push_back(text("  " + new_proc_error) | color(Color::Red));
@@ -535,7 +603,7 @@ int main() {
         rows.push_back(
             hbox({create_btn->Render(), text("  "), np_cancel->Render()}) | hcenter);
         return vbox(std::move(rows))
-            | border | size(WIDTH, EQUAL, 34) | size(HEIGHT, EQUAL, 9);
+            | border | size(WIDTH, EQUAL, 38) | size(HEIGHT, EQUAL, 11);
     });
 
     // ── Access modal state ───────────────────────────────────────────────────
@@ -910,6 +978,82 @@ int main() {
             | border | size(WIDTH, EQUAL, 58);
     });
 
+    // ── Two-level page table modal ───────────────────────────────────────────
+    bool show_pt_tree   = false;
+    int  pt_l1_selected = 0;
+    bool pt_l1_expanded = false;
+
+    auto pt_close = Button(" Close ", [&] {
+        show_pt_tree   = false;
+        pt_l1_expanded = false;
+    });
+
+    // CatchEvent wraps the close button so arrow keys and t navigate the grid.
+    auto pt_events = CatchEvent(pt_close, [&](Event e) {
+        if (!show_pt_tree) return false;
+        if (e == Event::ArrowLeft)  { pt_l1_selected = (pt_l1_selected + 31) % 32; return true; }
+        if (e == Event::ArrowRight) { pt_l1_selected = (pt_l1_selected +  1) % 32; return true; }
+        if (e == Event::ArrowUp)    { pt_l1_selected = (pt_l1_selected + 24) % 32; return true; }
+        if (e == Event::ArrowDown)  { pt_l1_selected = (pt_l1_selected +  8) % 32; return true; }
+        if (e == Event::Character('t')) { pt_l1_expanded = !pt_l1_expanded; return true; }
+        return false;
+    });
+
+    auto pt_modal = Renderer(pt_events, [&] {
+        int pid = sim.get_viewed_pid();
+        std::string title = " Two-Level Page Table"
+            + (pid >= 0 ? " — PID " + std::to_string(pid) : "") + " ";
+
+        std::vector<Element> rows = {
+            text(title) | bold | hcenter,
+            separator(),
+        };
+
+        if (pid < 0) {
+            rows.push_back(text("  (no process)") | dim | hcenter);
+        } else {
+            const IPageTable& ipt = sim.get_manager().get_process(pid).get_page_table();
+            const auto* tl = dynamic_cast<const TwoLevelPageTable*>(&ipt);
+            if (!tl) {
+                rows.push_back(text("  Process uses a flat page table.") | dim);
+                rows.push_back(text("  Create a process with [n] and select Two-Level.") | dim);
+            } else {
+                rows.push_back(render_l1_grid(*tl, pt_l1_selected));
+                rows.push_back(separator());
+
+                int vpn_base = pt_l1_selected << L2_BITS;
+                bool alloc = tl->l1_allocated(pt_l1_selected);
+                rows.push_back(hbox({
+                    text("  Slot " + std::to_string(pt_l1_selected)) | bold,
+                    text("  VPNs " + std::to_string(vpn_base)
+                         + "–" + std::to_string(vpn_base + L2_SIZE - 1)) | dim,
+                    filler(),
+                    alloc
+                        ? (text(std::to_string(tl->l2_present_count(pt_l1_selected))
+                                + "/32 present  ") | color(Color::Green))
+                        : (text("  not allocated  ") | dim),
+                }));
+                rows.push_back(
+                    text("  [t] " + std::string(pt_l1_expanded ? "collapse" : "expand")
+                         + "  ←→↑↓ navigate") | dim);
+
+                if (pt_l1_expanded) {
+                    if (!alloc) {
+                        rows.push_back(separator());
+                        rows.push_back(text("  L2 table not allocated for this slot.") | dim);
+                    } else {
+                        rows.push_back(separator());
+                        rows.push_back(render_l2_entries(*tl, pt_l1_selected));
+                    }
+                }
+            }
+        }
+
+        rows.push_back(separator());
+        rows.push_back(pt_close->Render() | hcenter);
+        return vbox(std::move(rows)) | border | size(WIDTH, EQUAL, 52);
+    });
+
     // ── Main view ────────────────────────────────────────────────────────────
     auto main_view = Renderer([&] {
         return vbox({
@@ -940,23 +1084,27 @@ int main() {
                 Modal(
                     Modal(
                         Modal(
-                            Modal(main_view, config_modal, &show_config),
-                            np_modal, &show_new_proc
+                            Modal(
+                                Modal(main_view, config_modal, &show_config),
+                                np_modal, &show_new_proc
+                            ),
+                            fork_modal, &show_fork
                         ),
-                        fork_modal, &show_fork
+                        presets_modal, &show_presets
                     ),
-                    presets_modal, &show_presets
+                    seq_modal, &show_seq
                 ),
-                seq_modal, &show_seq
+                cmp_modal, &show_compare
             ),
-            cmp_modal, &show_compare
+            access_modal, &show_access
         ),
-        access_modal, &show_access
+        pt_modal, &show_pt_tree
     );
 
     // ── Global event handling ────────────────────────────────────────────────
     auto with_events = CatchEvent(app, [&](Event e) {
         if (e == Event::Escape) {
+            if (show_pt_tree)  { show_pt_tree  = false; pt_l1_expanded = false;                                       return true; }
             if (show_access)   { show_access   = false; access_error.clear(); last_access.reset();                    return true; }
             if (show_compare)  { show_compare  = false; cmp_error.clear();    cmp_results.clear(); cmp_ran = false;   return true; }
             if (show_seq)      { show_seq      = false; seq_error.clear();    seq_result.clear();                     return true; }
@@ -965,7 +1113,7 @@ int main() {
             if (show_new_proc) { show_new_proc = false; new_proc_error.clear();                                       return true; }
             if (show_config)   { show_config   = false; config_error.clear();                                         return true; }
         }
-        if (show_config || show_new_proc || show_fork || show_presets || show_seq || show_compare || show_access) return false;
+        if (show_config || show_new_proc || show_fork || show_presets || show_seq || show_compare || show_access || show_pt_tree) return false;
 
         if (e == Event::Character('q')) { screen.ExitLoopClosure()(); return true; }
         if (e == Event::Character('a')) {
@@ -1010,6 +1158,12 @@ int main() {
             seq_error.clear();
             seq_result.clear();
             show_seq    = true;
+            return true;
+        }
+        if (e == Event::Character('t')) {
+            pt_l1_selected = 0;
+            pt_l1_expanded = false;
+            show_pt_tree   = true;
             return true;
         }
         if (e == Event::Character('C')) {

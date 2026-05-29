@@ -31,8 +31,8 @@ std::string SimulatorState::get_policy_name() const {
     }
 }
 
-void SimulatorState::create_process(int pid) {
-    manager->create_process(pid);
+void SimulatorState::create_process(int pid, PageTableType pt_type) {
+    manager->create_process(pid, pt_type);
     if (viewed_pid == -1) viewed_pid = pid;
 }
 

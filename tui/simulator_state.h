@@ -24,7 +24,7 @@ class SimulatorState {
 public:
     SimulatorState(PolicyType policy_type, int num_frames);
 
-    void        create_process(int pid);
+    void        create_process(int pid, PageTableType pt_type = PageTableType::FLAT);
     AccessEvent step(int pid, int virtual_address, bool is_write);
     void        fork(int parent_pid, int child_pid);
     void        reset(PolicyType policy_type, int num_frames);
