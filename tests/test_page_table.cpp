@@ -4,7 +4,7 @@
 #include "../src/constants.h"
 
 void test_insert_and_lookup() {
-    PageTable pt;
+    FlatPageTable pt;
     pt.insert(0, 5);
     PageTableEntry* entry = pt.lookup(0);
     assert(entry != nullptr);
@@ -14,14 +14,14 @@ void test_insert_and_lookup() {
 }
 
 void test_lookup_missing_vpn_returns_nullptr() {
-    PageTable pt;
+    FlatPageTable pt;
     PageTableEntry* entry = pt.lookup(99);
     assert(entry == nullptr);
     std::cout << "PASS: test_lookup_missing_vpn_returns_nullptr\n";
 }
 
 void test_insert_overwrites_existing_entry() {
-    PageTable pt;
+    FlatPageTable pt;
     pt.insert(0, 5);
     pt.insert(0, 10);
     PageTableEntry* entry = pt.lookup(0);
@@ -30,7 +30,7 @@ void test_insert_overwrites_existing_entry() {
 }
 
 void test_invalidate_marks_entry_invalid() {
-    PageTable pt;
+    FlatPageTable pt;
     pt.insert(0, 5);
     pt.invalidate(0);
     PageTableEntry* entry = pt.lookup(0);
@@ -40,13 +40,13 @@ void test_invalidate_marks_entry_invalid() {
 }
 
 void test_invalidate_missing_vpn_does_nothing() {
-    PageTable pt;
+    FlatPageTable pt;
     pt.invalidate(99); // should not throw or crash
     std::cout << "PASS: test_invalidate_missing_vpn_does_nothing\n";
 }
 
 void test_translate_valid_address() {
-    PageTable pt;
+    FlatPageTable pt;
     pt.insert(2, 3); // vpn 2 → frame 3
     // virtual address = vpn * PAGE_SIZE + offset
     int virtual_addr = 2 * PAGE_SIZE + 7;
@@ -57,7 +57,7 @@ void test_translate_valid_address() {
 }
 
 void test_translate_offset_arithmetic() {
-    PageTable pt;
+    FlatPageTable pt;
     pt.insert(0, 0);
     // offset 0 → first byte of frame
     assert(pt.translate(0) == 0);
@@ -71,14 +71,14 @@ void test_translate_offset_arithmetic() {
 }
 
 void test_translate_missing_entry_returns_page_fault() {
-    PageTable pt;
+    FlatPageTable pt;
     int result = pt.translate(PAGE_SIZE * 5);
     assert(result == -2);
     std::cout << "PASS: test_translate_missing_entry_returns_page_fault\n";
 }
 
 void test_translate_invalidated_entry_returns_page_fault() {
-    PageTable pt;
+    FlatPageTable pt;
     pt.insert(1, 2);
     pt.invalidate(1);
     int result = pt.translate(PAGE_SIZE * 1);
@@ -87,7 +87,7 @@ void test_translate_invalidated_entry_returns_page_fault() {
 }
 
 void test_translate_out_of_bounds_returns_invalid_address() {
-    PageTable pt;
+    FlatPageTable pt;
     assert(pt.translate(-1) == -1);
     assert(pt.translate(VIRTUAL_ADDRESS_SPACE_SIZE) == -1);
     assert(pt.translate(VIRTUAL_ADDRESS_SPACE_SIZE + 100) == -1);
@@ -95,7 +95,7 @@ void test_translate_out_of_bounds_returns_invalid_address() {
 }
 
 void test_entry_defaults() {
-    PageTable pt;
+    FlatPageTable pt;
     pt.insert(0, 3);
     PageTableEntry* entry = pt.lookup(0);
     assert(entry->dirty == false);
