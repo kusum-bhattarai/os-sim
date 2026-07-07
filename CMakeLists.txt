@@ -9,6 +9,8 @@ add_library(sim_core STATIC
     src/frame_pool.cpp
     src/page_table.cpp
     src/page_table_two_level.cpp
+    src/page_table_hashed.cpp
+    src/page_table_inverted.cpp
     src/tlb.cpp
     src/policy/clock.cpp
     src/policy/fifo.cpp
@@ -39,10 +41,13 @@ add_executable(test_cow          tests/test_cow.cpp)
 add_executable(test_tlb          tests/test_tlb.cpp)
 add_executable(test_clock        tests/test_clock.cpp)
 add_executable(test_two_level_page_table tests/test_two_level_page_table.cpp)
+add_executable(test_hashed_page_table tests/test_hashed_page_table.cpp)
+add_executable(test_inverted_page_table tests/test_inverted_page_table.cpp)
 
 foreach(t IN ITEMS
     test_frame_pool test_page_table test_fifo test_lru test_opt
-    test_memory_manager test_cow test_tlb test_clock test_two_level_page_table)
+    test_memory_manager test_cow test_tlb test_clock test_two_level_page_table
+    test_hashed_page_table test_inverted_page_table)
     target_link_libraries(${t} PRIVATE sim_core)
 endforeach()
 
@@ -56,8 +61,10 @@ add_executable(exp_f experiments/exp_f_tlb_locality.cpp)
 add_executable(exp_g experiments/exp_g_tlb_size_sweep.cpp)
 add_executable(exp_h experiments/exp_h_tlb_shootdown_cost.cpp)
 add_executable(exp_i experiments/exp_i_page_table_comparison.cpp)
+add_executable(exp_j experiments/exp_j_hashed_collisions.cpp)
+add_executable(exp_k experiments/exp_k_inverted_lookup.cpp)
 
-foreach(exp IN ITEMS exp_a exp_b exp_c exp_d exp_e exp_f exp_g exp_h exp_i)
+foreach(exp IN ITEMS exp_a exp_b exp_c exp_d exp_e exp_f exp_g exp_h exp_i exp_j exp_k)
     target_link_libraries(${exp} PRIVATE sim_core)
     target_include_directories(${exp} PRIVATE experiments)
 endforeach()
