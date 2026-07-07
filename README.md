@@ -27,8 +27,9 @@ The simulator ships with a full-screen terminal UI built with [FTXUI](https://gi
 | `a` | Single memory access — PID, address (decimal or `0x` hex), R/W mode |
 | `s` | Batch sequence run — type a space-separated VPN list; runs the full sequence against the current policy and shows a fault / TLB-hit / eviction summary |
 | `C` | Algorithm comparison — runs the same sequence through FIFO, LRU, and CLOCK in isolated managers and shows a side-by-side results table; optional frame sweep (1–N frames) highlights Belady's anomaly |
-| `n` | Create a new process |
+| `n` | Create a new process — choose a flat or two-level page table |
 | `f` | Fork — parent + child PID; all frames shared via CoW |
+| `t` | Two-level page table panel — 8×4 grid of L1 slots with per-slot L2 occupancy; arrows navigate, `t` expands the selected slot's entries |
 | `p` | Presets — 5 pre-built scenarios: Temporal Locality, Thrashing, CoW Read-Heavy, CoW Write-Heavy, CLOCK Second Chance |
 | `c` | Config — switch algorithm and frame count; takes effect immediately |
 | `r` | Reset — clears state, keeps current config |
@@ -60,6 +61,9 @@ The simulator ships with a full-screen terminal UI built with [FTXUI](https://gi
 
 **Virtual address translation**
 Each process has its own page table mapping virtual page numbers to physical frame indices. The `MemoryManager` handles address translation, detects page faults, and loads pages into physical frames.
+
+**Multi-level page tables**
+Page tables are pluggable behind an `IPageTable` interface. The default `FlatPageTable` is a single hash map over the full VPN space. The `TwoLevelPageTable` splits the 10-bit VPN 5+5: the top 5 bits index a fixed 32-slot L1 directory, the bottom 5 bits index a 32-entry L2 table that is only allocated when a page in its range is first touched. A compact working set of 16 pages needs one L2 table; a sparse workload touching one page per L1 slot pays one full L2 table per page — the same space/locality trade-off real hierarchical tables make (x86-64 uses 4 levels of the same idea).
 
 **Physical frame management**
 A `FramePool` manages a fixed set of physical frames. It tracks which frames are in use, maintains reference counts (for CoW sharing), and zeroes frames on deallocation.
@@ -94,6 +98,7 @@ Each process has a 16-entry fully-associative TLB that caches recent virtual-to-
 - How TLB hit rate has a sharp cliff at the working-set boundary rather than a gradual curve — with a 20-page working set, TLB sizes of 4, 8, and 16 all get 0% (thrashing), while size 32 jumps to 90% because the full working set fits and the first-pass cold misses are amortized over all subsequent rounds
 - How evictions and TLB hit rate are tightly coupled through shootdowns — with enough frames to hold the full working set there are zero evictions and a 90% hit rate, but reducing frames below the working-set size causes constant evictions that shoot down TLB entries faster than they can be reused, collapsing hit rate to 0%
 - Why CLOCK is what real OS kernels use instead of LRU — exact LRU requires updating a recency structure on every single memory access, while CLOCK only sets a bit on access and does the recency work at eviction time; the approximation quality is close enough in practice that the per-access overhead saving dominates
+- How multi-level page tables trade lookup depth for allocation laziness — the two-level table never stores entries for untouched address ranges, but the win depends entirely on locality: a compact 16-page working set costs one L2 table while the same 16 pages spread across the address space cost sixteen
 
 ---
 
@@ -102,7 +107,9 @@ Each process has a 16-entry fully-associative TLB that caches recent virtual-to-
 ```
 src/
   frame_pool.h/cpp         physical frame allocator with ref counting
-  page_table.h/cpp         per-process virtual-to-physical mapping
+  page_table_iface.h       IPageTable interface + PageTableEntry
+  page_table.h/cpp         FlatPageTable: hash map over the full VPN space
+  page_table_two_level.h/cpp  TwoLevelPageTable: 5+5 VPN split, L2 tables allocated on demand
   tlb.h/cpp                per-process TLB: 16-entry fully-associative, LRU eviction
   memory_manager.h/cpp     core simulator: fault handling, CoW, TLB, metrics
   process.h                process abstraction (holds a page table and TLB)
@@ -118,6 +125,8 @@ src/
 tests/
   test_frame_pool.cpp
   test_page_table.cpp
+  test_two_level_page_table.cpp  5 tests: L1 slot aliasing, shared L2 tables,
+                           invalidate semantics, fault codes, flat-table parity
   test_tlb.cpp             12 unit tests: lookup, insert, LRU eviction, invalidate, flush
   test_memory_manager.cpp  14 core tests + 5 TLB integration tests
   test_fifo.cpp
@@ -142,14 +151,12 @@ experiments/
   exp_f_tlb_locality.cpp            TLB hit rate vs access pattern locality
   exp_g_tlb_size_sweep.cpp          TLB hit rate vs TLB size (working-set cliff)
   exp_h_tlb_shootdown_cost.cpp      how evictions suppress TLB hit rate
+  exp_i_page_table_comparison.cpp   flat vs two-level table space under sparse/compact workloads
 ```
 
 ---
 
 ## Future work
-
-**Multi-level page tables**
-The current page table is a flat hash map over the full virtual address space. Real systems (x86-64 uses 4 levels) break the virtual address into chunks, each indexing into a tree of smaller tables. Most of the tree is never allocated — only the paths to pages actually in use. Worth implementing to understand how the OS avoids storing entries for the entire address space while keeping lookup depth bounded.
 
 **Alternative page table structures**
 Beyond hierarchical tables, there are two other designs worth understanding:
@@ -197,6 +204,24 @@ CLOCK matches FIFO on this sequence and sits one fault above OPT, the theoretica
 
 Hit rate is binary around the working-set boundary: TLB sizes below 20 thrash to 0%, size 32 jumps to 90% because the full working set fits and cold misses are only paid once. Doubling from 32 to 64 yields no further gain.
 
+**Flat vs two-level page table** (`exp_i`, 16 pages accessed, 64 frames)
+
+```
+Sparse workload (each VPN in a different L1 slot):
+Impl            Faults  Hits   Entries  L2 tables  L2 slots
+----------------------------------------------
+Flat                16     0        16          -         -
+Two-Level           16     0         -         16       512
+
+Compact workload (all VPNs in L1 slot 0):
+Impl            Faults  Hits   Entries  L2 tables  L2 slots
+----------------------------------------------
+Flat                16     0        16          -         -
+Two-Level           16     0         -          1        32
+```
+
+Fault behavior is identical — the table structure only changes where translations are stored. The space cost diverges: compact access needs a single 32-slot L2 table, while the sparse pattern allocates one L2 table per page touched.
+
 ---
 
 ## Build
@@ -226,6 +251,7 @@ cmake --build build
 ./build/test_opt
 ./build/test_memory_manager
 ./build/test_cow
+./build/test_two_level_page_table
 ```
 
 ## Run experiments
@@ -239,4 +265,5 @@ cmake --build build
 ./build/exp_f    # TLB hit rate vs access locality
 ./build/exp_g    # TLB hit rate vs TLB size
 ./build/exp_h    # TLB shootdown impact on hit rate
+./build/exp_i    # flat vs two-level page table
 ```
