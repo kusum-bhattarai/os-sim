@@ -571,17 +571,24 @@ int main() {
     bool show_config = false;
     int  algo_selected = static_cast<int>(sim.get_policy_type());
     std::string frames_str = std::to_string(sim.get_num_frames());
+    std::string window_str = std::to_string(sim.get_ws_window());
     std::string config_error;
 
-    std::vector<std::string> algo_labels = {"FIFO", "LRU", "CLOCK"};
+    std::vector<std::string> algo_labels = {"FIFO", "LRU", "CLOCK", "WS"};
     auto algo_radio   = Radiobox(&algo_labels, &algo_selected);
     auto frames_input = Input(&frames_str, "count");
+    auto window_input = Input(&window_str, "accesses");
 
     auto apply_btn = Button("  Apply  ", [&] {
         int f = 0;
         try { f = std::stoi(frames_str); } catch (...) {}
         if (f < 1 || f > 256) { config_error = "Frames must be 1-256"; return; }
-        sim.reset(static_cast<PolicyType>(algo_selected), f);
+        int w = sim.get_ws_window();
+        if (algo_selected == static_cast<int>(PolicyType::WS)) {
+            try { w = std::stoi(window_str); } catch (...) { w = 0; }
+            if (w < 1 || w > 1024) { config_error = "Window must be 1-1024"; return; }
+        }
+        sim.reset(static_cast<PolicyType>(algo_selected), f, w);
         sim.create_process(0);
         show_config = false;
         config_error.clear();
@@ -595,6 +602,7 @@ int main() {
     auto config_body = Container::Vertical({
         algo_radio,
         frames_input,
+        Maybe(window_input, [&] { return algo_selected == static_cast<int>(PolicyType::WS); }),
         Container::Horizontal({apply_btn, cfg_cancel}),
     });
 
@@ -607,13 +615,16 @@ int main() {
             separator(),
             hbox({text("  Frames: "), frames_input->Render() | size(WIDTH, EQUAL, 8)}),
         };
+        if (algo_selected == static_cast<int>(PolicyType::WS))
+            rows.push_back(
+                hbox({text("  Window: "), window_input->Render() | size(WIDTH, EQUAL, 8)}));
         if (!config_error.empty())
             rows.push_back(text("  " + config_error) | color(Color::Red));
         rows.push_back(separator());
         rows.push_back(
             hbox({apply_btn->Render(), text("  "), cfg_cancel->Render()}) | hcenter);
         return vbox(std::move(rows))
-            | border | size(WIDTH, EQUAL, 34) | size(HEIGHT, EQUAL, 14);
+            | border | size(WIDTH, EQUAL, 34) | size(HEIGHT, LESS_THAN, 17);
     });
 
     // ── New-process modal state ──────────────────────────────────────────────
@@ -1212,6 +1223,7 @@ int main() {
         if (e == Event::Character('c')) {
             algo_selected = static_cast<int>(sim.get_policy_type());
             frames_str    = std::to_string(sim.get_num_frames());
+            window_str    = std::to_string(sim.get_ws_window());
             config_error.clear();
             show_config   = true;
             return true;
@@ -1262,7 +1274,7 @@ int main() {
             return true;
         }
         if (e == Event::Character('r')) {
-            sim.reset(sim.get_policy_type(), sim.get_num_frames());
+            sim.reset(sim.get_policy_type(), sim.get_num_frames(), sim.get_ws_window());
             sim.create_process(0);
             log_scroll = 0;
             return true;
