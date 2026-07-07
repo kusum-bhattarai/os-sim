@@ -31,7 +31,8 @@ The simulator ships with a full-screen terminal UI built with [FTXUI](https://gi
 | `f` | Fork — parent + child PID; all frames shared via CoW |
 | `t` | Page table structure panel — adapts to the viewed process: two-level shows the 8×4 L1 slot grid (arrows navigate, `t` expands entries), hashed shows an 8×8 bucket grid with chain lengths, inverted shows the global frame→(PID, VPN) table |
 | `p` | Presets — 5 pre-built scenarios: Temporal Locality, Thrashing, CoW Read-Heavy, CoW Write-Heavy, CLOCK Second Chance |
-| `c` | Config — switch algorithm and frame count; takes effect immediately |
+| `c` | Config — switch algorithm (FIFO, LRU, CLOCK, WS) and frame count; WS adds a window-size field; takes effect immediately |
+| `w` | Working set trim — frees frames outside the WS window (no-op for other policies); metrics panel shows live WS size and trim count |
 | `r` | Reset — clears state, keeps current config |
 | `Tab` | Cycle viewed PID in page table and TLB panels |
 | `PgUp/Dn` | Scroll access log |
