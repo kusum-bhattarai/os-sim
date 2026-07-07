@@ -1,8 +1,10 @@
 #pragma once
 #include <memory>
+#include <stdexcept>
 #include "page_table.h"
 #include "page_table_two_level.h"
 #include "page_table_hashed.h"
+#include "page_table_inverted.h"
 #include "tlb.h"
 
 class Process {
@@ -13,12 +15,18 @@ private:
     PageTableType pt_type;
 
 public:
-    Process(int pid, size_t tlb_size = TLB_SIZE, PageTableType pt_type = PageTableType::FLAT)
+    Process(int pid, size_t tlb_size = TLB_SIZE, PageTableType pt_type = PageTableType::FLAT,
+            InvertedPageTable* shared_ipt = nullptr)
         : pid(pid), tlb(tlb_size), pt_type(pt_type) {
         if (pt_type == PageTableType::TWO_LEVEL)
             pt = std::make_unique<TwoLevelPageTable>();
         else if (pt_type == PageTableType::HASHED)
             pt = std::make_unique<HashedPageTable>();
+        else if (pt_type == PageTableType::INVERTED) {
+            if (shared_ipt == nullptr)
+                throw std::invalid_argument("Inverted page table requires a shared table");
+            pt = std::make_unique<InvertedPageTableView>(shared_ipt, pid);
+        }
         else
             pt = std::make_unique<FlatPageTable>();
     }

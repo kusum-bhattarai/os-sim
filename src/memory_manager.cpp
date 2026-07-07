@@ -30,7 +30,10 @@ void MemoryManager::create_process(int pid, PageTableType pt_type){
     if (processes.count(pid) > 0){
         throw std::runtime_error("Process with this PID already exists");
     }
-    processes[pid] = std::make_unique<Process>(pid, tlb_size, pt_type);
+    if (pt_type == PageTableType::INVERTED && inverted_pt == nullptr){
+        inverted_pt = std::make_unique<InvertedPageTable>(frame_pool.get_capacity());
+    }
+    processes[pid] = std::make_unique<Process>(pid, tlb_size, pt_type, inverted_pt.get());
 }
 
 void MemoryManager::access(int pid, int virtual_address, bool is_write){
@@ -123,6 +126,10 @@ void MemoryManager::fork_process(int parent_pid, int child_pid){
         throw std::runtime_error("Child PID already exists");
     } else {
         Process& parent = *processes[parent_pid];
+        if (parent.get_pt_type() == PageTableType::INVERTED){
+            // one (pid, vpn) owner per frame — CoW sharing would break the inverted invariant
+            throw std::runtime_error("fork not supported with inverted page table");
+        }
         auto child = std::make_unique<Process>(child_pid, tlb_size, parent.get_pt_type());
         IPageTable& parent_pt = parent.get_page_table();
         IPageTable& child_pt = child->get_page_table();

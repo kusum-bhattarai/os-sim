@@ -14,6 +14,7 @@ private:
     std::unique_ptr<ReplacementPolicy> policy;
     std::unordered_map<int,std::unique_ptr<Process>> processes; // pid -> process
     std::unordered_map<int, std::vector<std::pair<int,int>>> frame_to_owners;
+    std::unique_ptr<InvertedPageTable> inverted_pt; // shared by all INVERTED processes
     size_t tlb_size;
 
 public:
@@ -31,6 +32,7 @@ public:
 
     // read-only introspection for visualization
     const FramePool& get_frame_pool() const { return frame_pool; }
+    const InvertedPageTable* get_inverted_table() const { return inverted_pt.get(); }
     const Process&   get_process(int pid) const;
     std::vector<int> get_pids() const;
     std::vector<std::pair<int,int>> get_frame_owners(int frame_index) const;
