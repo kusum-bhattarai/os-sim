@@ -10,6 +10,7 @@ add_library(sim_core STATIC
     src/page_table.cpp
     src/page_table_two_level.cpp
     src/page_table_hashed.cpp
+    src/page_table_inverted.cpp
     src/tlb.cpp
     src/policy/clock.cpp
     src/policy/fifo.cpp
