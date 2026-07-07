@@ -15,6 +15,7 @@
 #include "page_table_two_level.h"
 #include "page_table_hashed.h"
 #include "page_table_inverted.h"
+#include "policy/working_set.h"
 
 using namespace ftxui;
 
@@ -303,22 +304,28 @@ static Element render_metrics(const SimulatorState& sim) {
         ? std::to_string(100 * m.tlb_hits / tlb_total) + "%"
         : "—";
 
-    return window(
-        text(" Metrics "),
-        vbox({
-            stat("Page Faults:", std::to_string(m.page_faults)),
-            stat("Hits:        ", std::to_string(m.hits)),
-            stat("Evictions:   ", std::to_string(m.evictions)),
-            separator(),
-            stat("TLB Hits:    ", std::to_string(m.tlb_hits)),
-            stat("TLB Misses:  ", std::to_string(m.tlb_misses)),
-            stat("Hit Rate:    ", hit_rate),
-            separator(),
-            stat("CoW Forks:   ", std::to_string(m.cow_forks)),
-            stat("CoW Copies:  ", std::to_string(m.cow_copies)),
-            stat("Avoided:     ", std::to_string(m.cow_copies_avoided)),
-        })
-    );
+    std::vector<Element> rows = {
+        stat("Page Faults:", std::to_string(m.page_faults)),
+        stat("Hits:        ", std::to_string(m.hits)),
+        stat("Evictions:   ", std::to_string(m.evictions)),
+        separator(),
+        stat("TLB Hits:    ", std::to_string(m.tlb_hits)),
+        stat("TLB Misses:  ", std::to_string(m.tlb_misses)),
+        stat("Hit Rate:    ", hit_rate),
+        separator(),
+        stat("CoW Forks:   ", std::to_string(m.cow_forks)),
+        stat("CoW Copies:  ", std::to_string(m.cow_copies)),
+        stat("Avoided:     ", std::to_string(m.cow_copies_avoided)),
+    };
+
+    if (const WorkingSetPolicy* ws = sim.get_ws_policy()) {
+        rows.push_back(separator());
+        rows.push_back(stat("WS Size:     ",
+            std::to_string(ws->working_set_size()) + "/" + std::to_string(ws->get_window())));
+        rows.push_back(stat("WS Trims:    ", std::to_string(m.ws_trims)));
+    }
+
+    return window(text(" Metrics "), vbox(std::move(rows)));
 }
 
 static Element render_l1_grid(const TwoLevelPageTable& tl, int selected) {
@@ -457,6 +464,7 @@ static Element render_controls() {
         key("f", "fork"),
         key("p", "presets"),
         key("c", "config"),
+        key("w", "WS trim"),
         key("r", "reset"),
         key("Tab", "next PID"),
         key("PgUp/Dn", "scroll log"),
@@ -1260,6 +1268,10 @@ int main() {
             pt_l1_selected = 0;
             pt_l1_expanded = false;
             show_pt_tree   = true;
+            return true;
+        }
+        if (e == Event::Character('w')) {
+            if (sim.get_ws_policy()) sim.trim_working_set();
             return true;
         }
         if (e == Event::Character('C')) {
