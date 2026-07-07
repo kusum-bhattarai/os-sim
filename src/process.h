@@ -2,6 +2,7 @@
 #include <memory>
 #include "page_table.h"
 #include "page_table_two_level.h"
+#include "page_table_hashed.h"
 #include "tlb.h"
 
 class Process {
@@ -16,6 +17,8 @@ public:
         : pid(pid), tlb(tlb_size), pt_type(pt_type) {
         if (pt_type == PageTableType::TWO_LEVEL)
             pt = std::make_unique<TwoLevelPageTable>();
+        else if (pt_type == PageTableType::HASHED)
+            pt = std::make_unique<HashedPageTable>();
         else
             pt = std::make_unique<FlatPageTable>();
     }
