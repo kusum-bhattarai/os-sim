@@ -13,6 +13,8 @@
 #include "comparison.h"
 #include "policy/clock.h"
 #include "page_table_two_level.h"
+#include "page_table_hashed.h"
+#include "page_table_inverted.h"
 
 using namespace ftxui;
 
@@ -378,6 +380,66 @@ static Element render_l2_entries(const TwoLevelPageTable& tl, int i1) {
     return vbox(std::move(rows));
 }
 
+static Element render_hashed_buckets(const HashedPageTable& ht) {
+    std::vector<Element> rows;
+    for (int row = 0; row < 8; row++) {
+        std::vector<Element> cells;
+        for (int col = 0; col < 8; col++) {
+            int b = row * 8 + col;
+            int len = ht.chain_length(b);
+            Element cell;
+            if (len == 0) {
+                cell = text(" -- ") | dim;
+            } else {
+                std::string label = len < 10
+                    ? "  " + std::to_string(len) + " "
+                    : " "  + std::to_string(len) + " ";
+                cell = text(label) | color(len > 2 ? Color::Yellow : Color::Green) | bold;
+            }
+            cells.push_back(cell | border);
+        }
+        rows.push_back(hbox(std::move(cells)));
+    }
+    return vbox(std::move(rows));
+}
+
+static Element render_inverted_entries(const InvertedPageTable& ipt) {
+    auto hdr = hbox({
+        text(" Frame ") | bold,
+        text("  PID  ") | bold,
+        text("  VPN  ") | bold,
+        text(" Dirty ") | bold,
+        text(" Write ") | bold,
+    }) | bgcolor(Color::GrayDark);
+
+    std::vector<Element> rows = { hdr };
+    int shown = 0, valid = 0;
+    for (int f = 0; f < ipt.frame_count(); f++) {
+        const InvertedEntry& e = ipt.entry_at(f);
+        if (e.pid == -1 || !e.entry.valid) continue;
+        valid++;
+        if (shown >= 16) continue;
+        shown++;
+        rows.push_back(hbox({
+            text("  " + std::to_string(f))
+                | color(Color::Cyan) | size(WIDTH, EQUAL, 7),
+            text(std::to_string(e.pid))
+                | size(WIDTH, EQUAL, 7),
+            text(std::to_string(e.vpn))
+                | size(WIDTH, EQUAL, 7),
+            text(e.entry.dirty    ? "  *  " : "  -  ")
+                | color(e.entry.dirty ? Color::Red : Color::GrayLight),
+            text(e.entry.writable ? "  rw " : "  r  ")
+                | color(e.entry.writable ? Color::Green : Color::Yellow),
+        }));
+    }
+    if (valid == 0)
+        rows.push_back(text("  (no valid mappings)") | dim);
+    if (valid > shown)
+        rows.push_back(text("  ... " + std::to_string(valid - shown) + " more") | dim);
+    return vbox(std::move(rows));
+}
+
 static Element render_controls() {
     auto key = [](const std::string& k, const std::string& desc) {
         return hbox({
@@ -389,7 +451,7 @@ static Element render_controls() {
         text("  "),
         key("a", "access"),
         key("s", "sequence"),
-        key("t", "2L table"),
+        key("t", "PT view"),
         key("C", "compare"),
         key("n", "new proc"),
         key("f", "fork"),
@@ -558,18 +620,21 @@ int main() {
     bool show_new_proc = false;
     std::string new_pid_str;
     std::string new_proc_error;
-    int new_proc_pt_type = 0; // 0 = FLAT, 1 = TWO_LEVEL
+    int new_proc_pt_type = 0; // 0 = FLAT, 1 = TWO_LEVEL, 2 = HASHED, 3 = INVERTED
 
     auto pid_input = Input(&new_pid_str, "e.g. 1");
 
-    std::vector<std::string> np_pt_labels = {"Flat", "Two-Level"};
+    std::vector<std::string> np_pt_labels = {"Flat", "Two-Level", "Hashed", "Inverted"};
     auto np_pt_radio = Radiobox(&np_pt_labels, &new_proc_pt_type);
 
     auto create_btn = Button("  Create  ", [&] {
         int pid = -1;
         try { pid = std::stoi(new_pid_str); } catch (...) {}
         if (pid < 0) { new_proc_error = "PID must be >= 0"; return; }
-        auto pt = (new_proc_pt_type == 1) ? PageTableType::TWO_LEVEL : PageTableType::FLAT;
+        auto pt = new_proc_pt_type == 1 ? PageTableType::TWO_LEVEL
+                : new_proc_pt_type == 2 ? PageTableType::HASHED
+                : new_proc_pt_type == 3 ? PageTableType::INVERTED
+                : PageTableType::FLAT;
         try {
             sim.create_process(pid, pt);
             show_new_proc = false;
@@ -1001,8 +1066,17 @@ int main() {
 
     auto pt_modal = Renderer(pt_events, [&] {
         int pid = sim.get_viewed_pid();
-        std::string title = " Two-Level Page Table"
-            + (pid >= 0 ? " — PID " + std::to_string(pid) : "") + " ";
+        const IPageTable* ipt = pid >= 0
+            ? &sim.get_manager().get_process(pid).get_page_table() : nullptr;
+        const auto* tl = dynamic_cast<const TwoLevelPageTable*>(ipt);
+        const auto* ht = dynamic_cast<const HashedPageTable*>(ipt);
+        const auto* iv = dynamic_cast<const InvertedPageTableView*>(ipt);
+
+        std::string title = tl ? " Two-Level Page Table"
+                          : ht ? " Hashed Page Table"
+                          : iv ? " Inverted Page Table"
+                          : " Page Table Structure";
+        title += (pid >= 0 ? " — PID " + std::to_string(pid) : "") + " ";
 
         std::vector<Element> rows = {
             text(title) | bold | hcenter,
@@ -1012,11 +1086,21 @@ int main() {
         if (pid < 0) {
             rows.push_back(text("  (no process)") | dim | hcenter);
         } else {
-            const IPageTable& ipt = sim.get_manager().get_process(pid).get_page_table();
-            const auto* tl = dynamic_cast<const TwoLevelPageTable*>(&ipt);
-            if (!tl) {
+            if (ht) {
+                rows.push_back(render_hashed_buckets(*ht));
+                rows.push_back(separator());
+                rows.push_back(hbox({
+                    text("  " + std::to_string(ht->get_entries().size()) + " entries") | bold,
+                    filler(),
+                    text("max chain " + std::to_string(ht->max_chain_length()) + "  ")
+                        | color(ht->max_chain_length() > 2 ? Color::Yellow : Color::Green),
+                }));
+            } else if (iv) {
+                rows.push_back(render_inverted_entries(*sim.get_manager().get_inverted_table()));
+                rows.push_back(text("  global table — one slot per physical frame") | dim);
+            } else if (!tl) {
                 rows.push_back(text("  Process uses a flat page table.") | dim);
-                rows.push_back(text("  Create a process with [n] and select Two-Level.") | dim);
+                rows.push_back(text("  Create a process with [n] and select a structure.") | dim);
             } else {
                 rows.push_back(render_l1_grid(*tl, pt_l1_selected));
                 rows.push_back(separator());
