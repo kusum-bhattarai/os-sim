@@ -16,6 +16,7 @@ add_library(sim_core STATIC
     src/policy/fifo.cpp
     src/policy/lru.cpp
     src/policy/opt.cpp
+    src/policy/working_set.cpp
     src/memory_manager.cpp
     src/metrics.cpp
 )
