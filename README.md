@@ -87,6 +87,12 @@ When all frames are occupied and a new page must be loaded, a replacement policy
 
 Reference counts on frames track how many processes share each frame. A frame is only freed when its reference count reaches zero.
 
+**Custom allocators**
+Two allocator designs sit alongside the paging simulator, handling the variable-size allocation problem the frame pool doesn't:
+
+- *Slab allocator* — built on top of the `FramePool`. Each slab is one physical frame carved into fixed-size objects from a size-class ladder (16–256 bytes). Allocation picks the smallest class that fits, pops a slot off the slab's LIFO free list in O(1), and grows the cache by one frame when every slab of that class is full. A slab whose last object is freed returns its frame to the pool. Fragmentation stats expose the cost of class round-up.
+- *Buddy allocator* — manages a power-of-two pool of pages with one free list per block order. Allocation rounds the request up to a power of two and splits larger blocks down to size; freeing walks back up, merging each block with its buddy (`base XOR 2^order`) as long as the buddy is also free. Split and coalesce are both O(log n) with no scanning.
+
 **Translation Lookaside Buffer (TLB)**
 Each process has a 16-entry fully-associative TLB that caches recent virtual-to-physical translations. On every access the TLB is checked first; only on a miss does the simulator fall through to the page table. The TLB uses LRU eviction among its entries. When a page is evicted from physical memory all owning processes have their TLB entry for that page invalidated (TLB shootdown). CoW writes that relocate a page to a new frame update the TLB immediately so subsequent accesses hit without a page-table walk. The simulator tracks TLB hits, misses, and hit rate alongside the existing page-fault and eviction metrics.
 
@@ -108,6 +114,8 @@ Each process has a 16-entry fully-associative TLB that caches recent virtual-to-
 - Why hashed page tables suit large sparse address spaces but live or die by the hash function — sequential pages cost 1 probe per lookup while an access stride equal to the bucket count chains everything into one bucket and costs 8.5
 - Why inverted page tables are the only design whose size scales with physical memory instead of virtual address space — and why they need a hash index bolted on top to make forward lookup affordable, and struggle with shared memory since each frame slot records exactly one owner
 - How the working set model separates "what to evict under pressure" from "what deserves to stay resident at all" — recency policies only act when frames run out, while working-set trimming returns memory as soon as a program's phase moves on, at the cost of refaulting if the old phase returns
+- Why the kernel uses slabs for objects and buddy blocks for pages — slabs make same-size alloc/free O(1) with waste bounded by size-class round-up, while the buddy system's XOR trick makes coalescing O(log n) at the cost of rounding every request up to a power of two
+- How external and internal fragmentation are two different failure modes — the buddy allocator can have half its pool free yet fail a 2-page request (external), while the slab allocator always satisfies requests but silently pads 24-byte objects to 32 (internal)
 
 ---
 
@@ -133,6 +141,9 @@ src/
     clock.h/cpp            second-chance approximation of LRU
     opt.h/cpp
     working_set.h/cpp      sliding-window working set with proactive trimming
+  alloc/
+    slab_allocator.h/cpp   size-class object caches carved from frames
+    buddy_allocator.h/cpp  power-of-two page allocator with buddy coalescing
 
 tests/
   test_frame_pool.cpp
@@ -145,6 +156,10 @@ tests/
                            linear vs indexed probes, MemoryManager integration, fork rejection
   test_working_set.cpp     8 tests: window expiry, trim behavior, refault after
                            trim, eviction fallback under pressure
+  test_slab_allocator.cpp  10 tests: size classes, slab growth, LIFO slot reuse,
+                           frame reclaim, double free, fragmentation stats
+  test_buddy_allocator.cpp 10 tests: split cascade, buddy coalescing, round-up,
+                           fragmentation blocking, exhaustion and reuse
   test_tlb.cpp             12 unit tests: lookup, insert, LRU eviction, invalidate, flush
   test_memory_manager.cpp  14 core tests + 5 TLB integration tests
   test_fifo.cpp
@@ -173,17 +188,25 @@ experiments/
   exp_j_hashed_collisions.cpp       hashed table probe cost under benign vs pathological strides
   exp_k_inverted_lookup.cpp         inverted table forward-lookup cost with and without hash index
   exp_l_working_set.cpp             working set trimming vs LRU across a phase change
+  exp_m_slab_allocator.cpp          slab packing vs one frame per object
+  exp_n_buddy_fragmentation.cpp     buddy fragmentation and coalescing cascade
 ```
 
 ---
 
 ## Future work
 
-**Custom memory allocator**
-The logical next step from this project. The frame pool here manages fixed-size physical frames — a real allocator has to handle variable-size requests, fragmentation, and alignment. Two allocator designs that build directly on the ideas here:
+**Swap and backing store**
+Evicted dirty pages currently vanish — a real OS writes them to disk and faults them back in with their contents intact. Adding a simulated swap file would make eviction cost asymmetric (clean pages are free to drop, dirty pages pay a writeback) and open the door to page-out daemons and prefetching.
 
-- *Slab allocator* — pre-allocates slabs of fixed-size objects for common allocation sizes (used by the Linux kernel for kernel objects). Eliminates fragmentation for known sizes and makes alloc/free O(1).
-- *Buddy allocator* — splits memory into power-of-two blocks and merges adjacent free blocks back together on free. Balances fragmentation and coalescing cost, and is what the Linux kernel uses for page-level allocation under the hood.
+**Slab on buddy**
+The slab allocator draws whole frames from the frame pool and the buddy allocator manages its own page range; in Linux the slab layer sits on top of the buddy allocator. Wiring the slab's frame requests through buddy allocation would model the real kernel stack and let slab caches grow in multi-page chunks.
+
+**TLB with ASIDs**
+Each process owns a private TLB here. Real CPUs share one TLB tagged with address-space IDs, so a context switch doesn't flush everything. Modeling a shared tagged TLB would show the cost of context switches with and without ASIDs.
+
+**Demand segmentation and memory-mapped files**
+Regions with different permissions (code, heap, stack) and file-backed mappings would exercise the page-table designs against sparser, more realistic address-space layouts.
 
 ---
 
@@ -274,6 +297,32 @@ Faults  WS: 16   LRU: 16
 
 Both policies fault identically because frames are never scarce. The difference is footprint: after the phase change, working-set trimming frees the cold phase-A pages within two rounds, while LRU keeps all 16 pages resident because nothing ever forces an eviction.
 
+**Slab allocator packing** (`exp_m`, 100 objects per size)
+
+```
+ Obj size Slab frames Naive frames    Slab util
+----------------------------------------------
+       16           2          100        78.1%
+       24           4          100        58.6%
+       64           7          100        89.3%
+      200          25          100        78.1%
+```
+
+A naive allocator burning one 1024-byte frame per object wastes over 90% of every frame. Slabs pack objects of one size class per frame; the only waste is class round-up (24 → 32) and the tail of the last partially-filled slab.
+
+**Buddy allocator fragmentation** (`exp_n`, 32-page pool)
+
+```
+Stage                   Free  Largest Alloc(2)
+----------------------------------------------
+fresh pool                32       32       ok
+alloc 32 x 1 page          0        0    fails
+free even pages           16        1    fails
+free odd pages            32       32       ok
+```
+
+After freeing every other page, half the pool is free but no two free pages are adjacent, so a 2-page request fails — external fragmentation in its purest form. Freeing the odd pages lets every block merge with its buddy, cascading back to one 32-page block.
+
 ---
 
 ## Build
@@ -307,6 +356,8 @@ cmake --build build
 ./build/test_hashed_page_table
 ./build/test_inverted_page_table
 ./build/test_working_set
+./build/test_slab_allocator
+./build/test_buddy_allocator
 ```
 
 ## Run experiments
@@ -324,4 +375,6 @@ cmake --build build
 ./build/exp_j    # hashed page table collisions
 ./build/exp_k    # inverted page table lookup cost
 ./build/exp_l    # working set trimming vs LRU
+./build/exp_m    # slab allocator packing
+./build/exp_n    # buddy allocator fragmentation
 ```
