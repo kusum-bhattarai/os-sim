@@ -42,11 +42,12 @@ add_executable(test_tlb          tests/test_tlb.cpp)
 add_executable(test_clock        tests/test_clock.cpp)
 add_executable(test_two_level_page_table tests/test_two_level_page_table.cpp)
 add_executable(test_hashed_page_table tests/test_hashed_page_table.cpp)
+add_executable(test_inverted_page_table tests/test_inverted_page_table.cpp)
 
 foreach(t IN ITEMS
     test_frame_pool test_page_table test_fifo test_lru test_opt
     test_memory_manager test_cow test_tlb test_clock test_two_level_page_table
-    test_hashed_page_table)
+    test_hashed_page_table test_inverted_page_table)
     target_link_libraries(${t} PRIVATE sim_core)
 endforeach()
 
