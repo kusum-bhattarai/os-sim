@@ -17,6 +17,8 @@ add_library(sim_core STATIC
     src/policy/lru.cpp
     src/policy/opt.cpp
     src/policy/working_set.cpp
+    src/alloc/slab_allocator.cpp
+    src/alloc/buddy_allocator.cpp
     src/memory_manager.cpp
     src/metrics.cpp
 )
@@ -45,11 +47,14 @@ add_executable(test_two_level_page_table tests/test_two_level_page_table.cpp)
 add_executable(test_hashed_page_table tests/test_hashed_page_table.cpp)
 add_executable(test_inverted_page_table tests/test_inverted_page_table.cpp)
 add_executable(test_working_set tests/test_working_set.cpp)
+add_executable(test_slab_allocator tests/test_slab_allocator.cpp)
+add_executable(test_buddy_allocator tests/test_buddy_allocator.cpp)
 
 foreach(t IN ITEMS
     test_frame_pool test_page_table test_fifo test_lru test_opt
     test_memory_manager test_cow test_tlb test_clock test_two_level_page_table
-    test_hashed_page_table test_inverted_page_table test_working_set)
+    test_hashed_page_table test_inverted_page_table test_working_set
+    test_slab_allocator test_buddy_allocator)
     target_link_libraries(${t} PRIVATE sim_core)
 endforeach()
 
@@ -66,8 +71,10 @@ add_executable(exp_i experiments/exp_i_page_table_comparison.cpp)
 add_executable(exp_j experiments/exp_j_hashed_collisions.cpp)
 add_executable(exp_k experiments/exp_k_inverted_lookup.cpp)
 add_executable(exp_l experiments/exp_l_working_set.cpp)
+add_executable(exp_m experiments/exp_m_slab_allocator.cpp)
+add_executable(exp_n experiments/exp_n_buddy_fragmentation.cpp)
 
-foreach(exp IN ITEMS exp_a exp_b exp_c exp_d exp_e exp_f exp_g exp_h exp_i exp_j exp_k exp_l)
+foreach(exp IN ITEMS exp_a exp_b exp_c exp_d exp_e exp_f exp_g exp_h exp_i exp_j exp_k exp_l exp_m exp_n)
     target_link_libraries(${exp} PRIVATE sim_core)
     target_include_directories(${exp} PRIVATE experiments)
 endforeach()
