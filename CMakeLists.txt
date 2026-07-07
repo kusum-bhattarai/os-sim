@@ -18,6 +18,7 @@ add_library(sim_core STATIC
     src/policy/opt.cpp
     src/policy/working_set.cpp
     src/alloc/slab_allocator.cpp
+    src/alloc/buddy_allocator.cpp
     src/memory_manager.cpp
     src/metrics.cpp
 )
