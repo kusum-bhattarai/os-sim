@@ -80,6 +80,7 @@ When all frames are occupied and a new page must be loaded, a replacement policy
 - **LRU** — evicts the frame that was least recently accessed, tracked with a doubly-linked list and hash map for O(1) updates
 - **CLOCK** — approximates LRU using a reference bit per frame and a circular hand; recently accessed frames get one second chance before eviction, with no pointer manipulation on every access
 - **OPT** — evicts the frame whose next use is farthest in the future (Belady's algorithm); requires the full access sequence upfront, so it serves as a theoretical lower bound on faults
+- **Working Set** — tracks each frame's last access on a virtual clock; frames untouched for the last τ accesses fall out of the working set and `trim_working_set()` frees them even when free frames remain, modeling the phase behavior of real programs. Under eviction pressure it falls back to evicting the oldest frame
 
 **Copy-on-Write (CoW)**
 `fork_process(parent, child)` creates a child process that shares the parent's physical frames rather than copying them. All shared pages are marked read-only. On the first write by either process, the writing process gets its own private copy of that frame. Once only one process owns a frame, it becomes writable again with no further overhead.
@@ -106,6 +107,7 @@ Each process has a 16-entry fully-associative TLB that caches recent virtual-to-
 - How multi-level page tables trade lookup depth for allocation laziness — the two-level table never stores entries for untouched address ranges, but the win depends entirely on locality: a compact 16-page working set costs one L2 table while the same 16 pages spread across the address space cost sixteen
 - Why hashed page tables suit large sparse address spaces but live or die by the hash function — sequential pages cost 1 probe per lookup while an access stride equal to the bucket count chains everything into one bucket and costs 8.5
 - Why inverted page tables are the only design whose size scales with physical memory instead of virtual address space — and why they need a hash index bolted on top to make forward lookup affordable, and struggle with shared memory since each frame slot records exactly one owner
+- How the working set model separates "what to evict under pressure" from "what deserves to stay resident at all" — recency policies only act when frames run out, while working-set trimming returns memory as soon as a program's phase moves on, at the cost of refaulting if the old phase returns
 
 ---
 
@@ -130,6 +132,7 @@ src/
     lru.h/cpp
     clock.h/cpp            second-chance approximation of LRU
     opt.h/cpp
+    working_set.h/cpp      sliding-window working set with proactive trimming
 
 tests/
   test_frame_pool.cpp
@@ -140,6 +143,8 @@ tests/
                            counting, fault codes, flat-table parity
   test_inverted_page_table.cpp  9 tests: per-pid isolation, occupant replacement,
                            linear vs indexed probes, MemoryManager integration, fork rejection
+  test_working_set.cpp     8 tests: window expiry, trim behavior, refault after
+                           trim, eviction fallback under pressure
   test_tlb.cpp             12 unit tests: lookup, insert, LRU eviction, invalidate, flush
   test_memory_manager.cpp  14 core tests + 5 TLB integration tests
   test_fifo.cpp
@@ -167,14 +172,12 @@ experiments/
   exp_i_page_table_comparison.cpp   flat vs two-level table space under sparse/compact workloads
   exp_j_hashed_collisions.cpp       hashed table probe cost under benign vs pathological strides
   exp_k_inverted_lookup.cpp         inverted table forward-lookup cost with and without hash index
+  exp_l_working_set.cpp             working set trimming vs LRU across a phase change
 ```
 
 ---
 
 ## Future work
-
-**Working set model**
-Rather than evicting based on recency alone, the working set model tracks which pages each process has accessed within a sliding time window and only keeps those in memory. Pages that fall out of the window are candidates for eviction even if frames are available. This models the principle that processes have phases of execution with distinct locality, and that keeping cold pages in memory to avoid future faults is not always worth the cost.
 
 **Custom memory allocator**
 The logical next step from this project. The frame pool here manages fixed-size physical frames — a real allocator has to handle variable-size requests, fragmentation, and alignment. Two allocator designs that build directly on the ideas here:
@@ -256,6 +259,21 @@ Sequential VPNs spread evenly and cost one probe per lookup. A stride equal to t
 
 The table always has one slot per physical frame. Without the hash index, forward lookup scans half the table on average and grows linearly with memory size; the index makes it a single probe.
 
+**Working set trimming across a phase change** (`exp_l`, two 8-page phases, 32 frames, window 12)
+
+```
+  Round  Phase        WS held   LRU held    Trims
+----------------------------------------------
+      5  A (0-7)            8          8        0
+      6  B (8-15)          12         16        4
+      7  B (8-15)           8         16        8
+     10  B (8-15)           8         16        8
+----------------------------------------------
+Faults  WS: 16   LRU: 16
+```
+
+Both policies fault identically because frames are never scarce. The difference is footprint: after the phase change, working-set trimming frees the cold phase-A pages within two rounds, while LRU keeps all 16 pages resident because nothing ever forces an eviction.
+
 ---
 
 ## Build
@@ -288,6 +306,7 @@ cmake --build build
 ./build/test_two_level_page_table
 ./build/test_hashed_page_table
 ./build/test_inverted_page_table
+./build/test_working_set
 ```
 
 ## Run experiments
@@ -304,4 +323,5 @@ cmake --build build
 ./build/exp_i    # flat vs two-level page table
 ./build/exp_j    # hashed page table collisions
 ./build/exp_k    # inverted page table lookup cost
+./build/exp_l    # working set trimming vs LRU
 ```
