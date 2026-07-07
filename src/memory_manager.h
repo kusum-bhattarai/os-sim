@@ -26,6 +26,9 @@ public:
     void fork_process(int parent_pid, int child_pid);
     void handle_cow(int pid, int vpn, PageTableEntry* entry);
 
+    // free frames that fell out of the working set window; returns count trimmed
+    int trim_working_set();
+
     void print_metrics() const { metrics.print(); }
     void reset_metrics() { metrics.reset(); }
     const Metrics& get_metrics() const { return metrics; }

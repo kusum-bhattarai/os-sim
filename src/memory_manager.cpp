@@ -1,4 +1,5 @@
 #include "memory_manager.h"
+#include "policy/working_set.h"
 #include <algorithm>
 #include <stdexcept>
 
@@ -147,6 +148,26 @@ void MemoryManager::fork_process(int parent_pid, int child_pid){
         processes[child_pid] = std::move(child);
         metrics.cow_forks++;
     }
+}
+
+int MemoryManager::trim_working_set(){
+    auto* ws = dynamic_cast<WorkingSetPolicy*>(policy.get());
+    if (ws == nullptr){
+        return 0;
+    }
+    int trimmed = 0;
+    for (int frame : ws->expired_frames()){
+        for (auto& [owner_pid, owner_vpn] : frame_to_owners[frame]){
+            processes[owner_pid]->get_page_table().invalidate(owner_vpn);
+            processes[owner_pid]->get_tlb().invalidate(owner_vpn);
+        }
+        frame_to_owners[frame].clear();
+        frame_pool.deallocate(frame);
+        ws->remove(frame);
+        metrics.ws_trims++;
+        trimmed++;
+    }
+    return trimmed;
 }
 
 void MemoryManager::handle_cow(int pid, int vpn, PageTableEntry* entry){
