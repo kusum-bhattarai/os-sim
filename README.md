@@ -27,9 +27,9 @@ The simulator ships with a full-screen terminal UI built with [FTXUI](https://gi
 | `a` | Single memory access — PID, address (decimal or `0x` hex), R/W mode |
 | `s` | Batch sequence run — type a space-separated VPN list; runs the full sequence against the current policy and shows a fault / TLB-hit / eviction summary |
 | `C` | Algorithm comparison — runs the same sequence through FIFO, LRU, and CLOCK in isolated managers and shows a side-by-side results table; optional frame sweep (1–N frames) highlights Belady's anomaly |
-| `n` | Create a new process — choose a flat or two-level page table |
+| `n` | Create a new process — choose a flat, two-level, hashed, or inverted page table |
 | `f` | Fork — parent + child PID; all frames shared via CoW |
-| `t` | Two-level page table panel — 8×4 grid of L1 slots with per-slot L2 occupancy; arrows navigate, `t` expands the selected slot's entries |
+| `t` | Page table structure panel — adapts to the viewed process: two-level shows the 8×4 L1 slot grid (arrows navigate, `t` expands entries), hashed shows an 8×8 bucket grid with chain lengths, inverted shows the global frame→(PID, VPN) table |
 | `p` | Presets — 5 pre-built scenarios: Temporal Locality, Thrashing, CoW Read-Heavy, CoW Write-Heavy, CLOCK Second Chance |
 | `c` | Config — switch algorithm and frame count; takes effect immediately |
 | `r` | Reset — clears state, keeps current config |
@@ -65,6 +65,11 @@ Each process has its own page table mapping virtual page numbers to physical fra
 **Multi-level page tables**
 Page tables are pluggable behind an `IPageTable` interface. The default `FlatPageTable` is a single hash map over the full VPN space. The `TwoLevelPageTable` splits the 10-bit VPN 5+5: the top 5 bits index a fixed 32-slot L1 directory, the bottom 5 bits index a 32-entry L2 table that is only allocated when a page in its range is first touched. A compact working set of 16 pages needs one L2 table; a sparse workload touching one page per L1 slot pays one full L2 table per page — the same space/locality trade-off real hierarchical tables make (x86-64 uses 4 levels of the same idea).
 
+**Hashed and inverted page tables**
+The `HashedPageTable` hashes the VPN into one of 64 buckets and chains collisions inside the bucket. Lookup is O(1) on average but degrades to a chain scan when many VPNs hash to the same bucket — an access stride equal to the bucket count is the pathological case. Probe counters make the degradation measurable.
+
+The `InvertedPageTable` flips the indexing: one global table with a slot per physical frame recording which `(pid, vpn)` owns it, so its size scales with physical memory instead of virtual address space. Forward lookup (VPN → frame) requires scanning half the table on average, so a hash index over `(pid, vpn)` sits on top — the same fix real systems (PowerPC, PA-RISC) use. All processes created with an inverted table share the single global table through a per-process view. Fork is rejected for inverted processes: CoW sharing needs multiple owners per frame, and the inverted design records exactly one — a real limitation of inverted tables with shared memory.
+
 **Physical frame management**
 A `FramePool` manages a fixed set of physical frames. It tracks which frames are in use, maintains reference counts (for CoW sharing), and zeroes frames on deallocation.
 
@@ -99,6 +104,8 @@ Each process has a 16-entry fully-associative TLB that caches recent virtual-to-
 - How evictions and TLB hit rate are tightly coupled through shootdowns — with enough frames to hold the full working set there are zero evictions and a 90% hit rate, but reducing frames below the working-set size causes constant evictions that shoot down TLB entries faster than they can be reused, collapsing hit rate to 0%
 - Why CLOCK is what real OS kernels use instead of LRU — exact LRU requires updating a recency structure on every single memory access, while CLOCK only sets a bit on access and does the recency work at eviction time; the approximation quality is close enough in practice that the per-access overhead saving dominates
 - How multi-level page tables trade lookup depth for allocation laziness — the two-level table never stores entries for untouched address ranges, but the win depends entirely on locality: a compact 16-page working set costs one L2 table while the same 16 pages spread across the address space cost sixteen
+- Why hashed page tables suit large sparse address spaces but live or die by the hash function — sequential pages cost 1 probe per lookup while an access stride equal to the bucket count chains everything into one bucket and costs 8.5
+- Why inverted page tables are the only design whose size scales with physical memory instead of virtual address space — and why they need a hash index bolted on top to make forward lookup affordable, and struggle with shared memory since each frame slot records exactly one owner
 
 ---
 
@@ -110,6 +117,8 @@ src/
   page_table_iface.h       IPageTable interface + PageTableEntry
   page_table.h/cpp         FlatPageTable: hash map over the full VPN space
   page_table_two_level.h/cpp  TwoLevelPageTable: 5+5 VPN split, L2 tables allocated on demand
+  page_table_hashed.h/cpp  HashedPageTable: 64 chained buckets, probe counters
+  page_table_inverted.h/cpp  InvertedPageTable: global frame-indexed table + per-process view
   tlb.h/cpp                per-process TLB: 16-entry fully-associative, LRU eviction
   memory_manager.h/cpp     core simulator: fault handling, CoW, TLB, metrics
   process.h                process abstraction (holds a page table and TLB)
@@ -127,6 +136,10 @@ tests/
   test_page_table.cpp
   test_two_level_page_table.cpp  5 tests: L1 slot aliasing, shared L2 tables,
                            invalidate semantics, fault codes, flat-table parity
+  test_hashed_page_table.cpp  7 tests: collision chaining, re-insert, probe
+                           counting, fault codes, flat-table parity
+  test_inverted_page_table.cpp  9 tests: per-pid isolation, occupant replacement,
+                           linear vs indexed probes, MemoryManager integration, fork rejection
   test_tlb.cpp             12 unit tests: lookup, insert, LRU eviction, invalidate, flush
   test_memory_manager.cpp  14 core tests + 5 TLB integration tests
   test_fifo.cpp
@@ -152,17 +165,13 @@ experiments/
   exp_g_tlb_size_sweep.cpp          TLB hit rate vs TLB size (working-set cliff)
   exp_h_tlb_shootdown_cost.cpp      how evictions suppress TLB hit rate
   exp_i_page_table_comparison.cpp   flat vs two-level table space under sparse/compact workloads
+  exp_j_hashed_collisions.cpp       hashed table probe cost under benign vs pathological strides
+  exp_k_inverted_lookup.cpp         inverted table forward-lookup cost with and without hash index
 ```
 
 ---
 
 ## Future work
-
-**Alternative page table structures**
-Beyond hierarchical tables, there are two other designs worth understanding:
-
-- *Hashed page tables* — the VPN is hashed into a bucket; collisions are chained. Common in systems with large, sparse address spaces. Lookup is O(1) average but degrades under hash collisions.
-- *Inverted page tables* — instead of one table per process indexed by VPN, there is one global table indexed by physical frame number, storing which process and VPN owns each frame. Scales with physical memory rather than virtual address space size, but makes forward lookup (VPN → frame) expensive without a hash index on top.
 
 **Working set model**
 Rather than evicting based on recency alone, the working set model tracks which pages each process has accessed within a sliding time window and only keeps those in memory. Pages that fall out of the window are candidates for eviction even if frames are available. This models the principle that processes have phases of execution with distinct locality, and that keeping cold pages in memory to avoid future faults is not always worth the cost.
@@ -222,6 +231,31 @@ Two-Level           16     0         -          1        32
 
 Fault behavior is identical — the table structure only changes where translations are stored. The space cost diverges: compact access needs a single 32-slot L2 table, while the sparse pattern allocates one L2 table per page touched.
 
+**Hashed page table collisions** (`exp_j`, 64 buckets)
+
+```
+Workload                Entries  Max chain  Avg probes
+----------------------------------------------
+Sequential (0..15)           16          1        1.00
+Strided (x64)                16         16        8.50
+Full (1024 pages)          1024         16        8.50
+```
+
+Sequential VPNs spread evenly and cost one probe per lookup. A stride equal to the bucket count is pathological: all 16 entries chain in bucket 0 and the average lookup scans half the chain.
+
+**Inverted page table forward-lookup cost** (`exp_k`, full table)
+
+```
+  Frames  Table slots  Linear probes   Indexed
+----------------------------------------------
+      16           16            8.5       1.0
+      64           64           32.5       1.0
+     256          256          128.5       1.0
+    1024         1024          512.5       1.0
+```
+
+The table always has one slot per physical frame. Without the hash index, forward lookup scans half the table on average and grows linearly with memory size; the index makes it a single probe.
+
 ---
 
 ## Build
@@ -252,6 +286,8 @@ cmake --build build
 ./build/test_memory_manager
 ./build/test_cow
 ./build/test_two_level_page_table
+./build/test_hashed_page_table
+./build/test_inverted_page_table
 ```
 
 ## Run experiments
@@ -266,4 +302,6 @@ cmake --build build
 ./build/exp_g    # TLB hit rate vs TLB size
 ./build/exp_h    # TLB shootdown impact on hit rate
 ./build/exp_i    # flat vs two-level page table
+./build/exp_j    # hashed page table collisions
+./build/exp_k    # inverted page table lookup cost
 ```
