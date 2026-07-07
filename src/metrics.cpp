@@ -12,7 +12,8 @@ void Metrics::print() const {
               << "Copies Avoided:  " << cow_copies_avoided << "\n"
               << "TLB Hits:        " << tlb_hits           << "\n"
               << "TLB Misses:      " << tlb_misses         << "\n"
-              << "TLB Hit Rate:    " << tlb_hit_rate       << "%\n";
+              << "TLB Hit Rate:    " << tlb_hit_rate       << "%\n"
+              << "WS Trims:        " << ws_trims           << "\n";
 }
 
 void Metrics::reset() {
@@ -24,6 +25,7 @@ void Metrics::reset() {
     cow_copies_avoided = 0;
     tlb_hits = 0;
     tlb_misses = 0;
+    ws_trims = 0;
 }
 
 const Metrics& Metrics::get_metrics() const {
