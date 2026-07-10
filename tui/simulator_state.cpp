@@ -2,23 +2,26 @@
 #include "policy/fifo.h"
 #include "policy/lru.h"
 #include "policy/clock.h"
+#include "policy/working_set.h"
 #include "constants.h"
 #include <algorithm>
 
-std::unique_ptr<ReplacementPolicy> SimulatorState::make_policy(PolicyType type) {
+std::unique_ptr<ReplacementPolicy> SimulatorState::make_policy(PolicyType type, int ws_window) {
     switch (type) {
         case PolicyType::FIFO:  return std::make_unique<FIFO>();
         case PolicyType::CLOCK: return std::make_unique<Clock>();
+        case PolicyType::WS:    return std::make_unique<WorkingSetPolicy>(ws_window);
         case PolicyType::LRU:
         default:                return std::make_unique<LRU>();
     }
 }
 
-SimulatorState::SimulatorState(PolicyType policy_type, int num_frames)
-    : policy_type(policy_type), num_frames(num_frames)
+SimulatorState::SimulatorState(PolicyType policy_type, int num_frames, int ws_window)
+    : policy_type(policy_type), num_frames(num_frames), ws_window(ws_window)
 {
-    auto policy  = make_policy(policy_type);
+    auto policy  = make_policy(policy_type, ws_window);
     clock_policy = dynamic_cast<Clock*>(policy.get());
+    ws_policy    = dynamic_cast<WorkingSetPolicy*>(policy.get());
     manager      = std::make_unique<MemoryManager>(policy.release(), num_frames);
 }
 
@@ -26,6 +29,7 @@ std::string SimulatorState::get_policy_name() const {
     switch (policy_type) {
         case PolicyType::FIFO:  return "FIFO";
         case PolicyType::CLOCK: return "CLOCK";
+        case PolicyType::WS:    return "WS(" + std::to_string(ws_window) + ")";
         case PolicyType::LRU:   return "LRU";
         default:                return "?";
     }
@@ -61,14 +65,20 @@ void SimulatorState::fork(int parent_pid, int child_pid) {
     if (viewed_pid == -1) viewed_pid = child_pid;
 }
 
-void SimulatorState::reset(PolicyType new_policy_type, int new_num_frames) {
+void SimulatorState::reset(PolicyType new_policy_type, int new_num_frames, int new_ws_window) {
     policy_type  = new_policy_type;
     num_frames   = new_num_frames;
-    auto policy  = make_policy(policy_type);
+    ws_window    = new_ws_window;
+    auto policy  = make_policy(policy_type, ws_window);
     clock_policy = dynamic_cast<Clock*>(policy.get());
+    ws_policy    = dynamic_cast<WorkingSetPolicy*>(policy.get());
     manager      = std::make_unique<MemoryManager>(policy.release(), num_frames);
     log.clear();
     viewed_pid   = -1;
+}
+
+int SimulatorState::trim_working_set() {
+    return manager->trim_working_set();
 }
 
 void SimulatorState::cycle_viewed_pid() {
